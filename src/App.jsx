@@ -3,6 +3,8 @@
 //import React, { useEffect, useMemo, useState } from "react";
 // App.jsx 최상단 import들 아래
 import React, { useEffect, useMemo, useState, useLayoutEffect } from "react";
+import { flushSync } from "react-dom";
+
 const SettingsView = React.lazy(() => import("./SettingsView"));
 
 function usePortraitOnly() {
@@ -714,13 +716,17 @@ export default function App() {
   // ⬇︎ 추가: 좌우 스와이프 시 하루 전/후 이동
 // ⬇︎ 좌우 스와이프 시 하루 전/후 이동
 const goPrevDay = () => {
-  setSelectedDate((d) => addDaysSafe(d, -1));
-  setAltView(false); // ✅ 이전날로 이동 시 무조건 행로표로 복귀
+  flushSync(() => {
+    setSelectedDate((d) => addDaysSafe(d, -1));
+  });
+  setAltView(false); // ✅ 날짜 변경 직후 동기적으로 복귀
 };
 
 const goNextDay = () => {
-  setSelectedDate((d) => addDaysSafe(d, 1));
-  setAltView(false); // ✅ 다음날로 이동 시 무조건 행로표로 복귀
+  flushSync(() => {
+    setSelectedDate((d) => addDaysSafe(d, 1));
+  });
+  setAltView(false); // ✅ 날짜 변경 직후 동기적으로 복귀
 };
 
   const [tempName, setTempName] = useState(""); // 홈 탭용 임시 이름
