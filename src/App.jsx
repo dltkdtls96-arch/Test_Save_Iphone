@@ -2042,7 +2042,8 @@ export default function App() {
                         lastCellIdxOfThisMonth / 7
                       );
                       const actualRows = lastRowIndex + 1; // 4~6
-                      const compressLastRow = actualRows === 6;
+                      //const compressLastRow = actualRows === 6;
+                      const compressLastRow = false; // 6주여도 전부 동일 높이로
 
                       return (
                         <div
@@ -2215,6 +2216,7 @@ export default function App() {
                                     <div className="truncate text-[clamp(9px,1vw,11px)] max-w-[50px]">
                                       {t.out}
                                     </div>
+                                    {/* 
                                     <div className="truncate text-[clamp(8px,1vw,11px)] max-w-[50px]">
                                       {t.isNight && selectedDepot !== "교대" ? (
                                         `${t.combo}`
@@ -2222,6 +2224,7 @@ export default function App() {
                                         <span className="invisible">공백</span>
                                       )}
                                     </div>
+                                    */}
                                   </div>
                                 </div>
                               </button>
