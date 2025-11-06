@@ -2206,16 +2206,18 @@ export default function App() {
                                     }
                                   >
                                     <div
-                                      className={`break-words text-[clamp(11px,1vw,11px)] leading-tight ${diaColorClass}`}
+                                      className={`break-words text-[clamp(11px,1vw,11px)] leading-tight ${diaColorClass} mb-[6px]`}
                                     >
                                       {diaLabel}
                                     </div>
-                                    <div className="truncate text-[clamp(10px,1vw,11px)] max-w-[50px]">
-                                      {t.in}
-                                    </div>
-                                    <div className="truncate text-[clamp(9px,1vw,11px)] max-w-[50px]">
-                                      {t.out}
-                                    </div>
+                                    <div className="flex flex-col gap-[2px] leading-[1.08]">
+                                     <div className="truncate text-[clamp(10px,1vw,11px)] max-w-[50px]">
+                                       {t.in}
+                                     </div>
+                                     <div className="truncate text-[clamp(9px,1vw,11px)] max-w-[50px]">
+                                       {t.out}
+                                     </div>
+                                    </div> 
                                     {/* 
                                     <div className="truncate text-[clamp(8px,1vw,11px)] max-w-[50px]">
                                       {t.isNight && selectedDepot !== "교대" ? (
