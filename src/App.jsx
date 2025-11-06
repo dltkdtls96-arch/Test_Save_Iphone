@@ -2206,11 +2206,11 @@ export default function App() {
                                     }
                                   >
                                     <div
-                                      className={`break-words text-[clamp(11px,1vw,11px)] leading-tight ${diaColorClass} mb-[6px]`}
+                                      className={`break-words text-[clamp(13px,1vw,11px)] leading-tight ${diaColorClass} mb-[5px]`}
                                     >
                                       {diaLabel}
                                     </div>
-                                    <div className="flex flex-col gap-[2px] leading-[1.08]">
+                                    <div className="flex flex-col gap-[3px] leading-[1.08]">
                                      <div className="truncate text-[clamp(10px,1vw,11px)] max-w-[50px]">
                                        {t.in}
                                      </div>
