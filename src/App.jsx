@@ -1564,6 +1564,12 @@ React.useEffect(() => {
   }
 }, [selectedTab]);
 
+// 날짜가 바뀔 때마다 행로표로 초기화
+React.useEffect(() => {
+  setAltView(false);
+}, [selectedDate]);
+
+
 
 // 대상/날짜 바뀌면 기본(행로표)로 복귀
 React.useEffect(() => {
