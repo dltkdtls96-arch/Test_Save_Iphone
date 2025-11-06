@@ -1518,6 +1518,22 @@ export default function App() {
     );
   }
 
+  // (예) 다른 route 상태들 바로 아래에 추가
+  const [busImgUrl, setBusImgUrl] = React.useState("");  // 버스시간표 이미지 (업로드 후 세팅)
+  const [flipBus, setFlipBus] = React.useState(false);
+  const lastTapRef = React.useRef(0);
+
+  function toggleFlip() {
+    if (!busImgUrl) return;     // 버스표가 있을 때만 뒤집기
+    setFlipBus((v) => !v);
+  }
+
+  function onTapEndCheck() {     // 모바일 더블탭 감지
+    const now = Date.now();
+    if (now - lastTapRef.current < 280) toggleFlip();
+    lastTapRef.current = now;
+  }
+
   // 드래그 상태
   const [dragYHome, setDragYHome] = useState(0);
   const [dragYRoute, setDragYRoute] = useState(0);
@@ -2652,26 +2668,86 @@ export default function App() {
                           if (!src) return null;
 
                           return (
-                            <div className="mt-2 rounded-xl overflow-hidden bg-black/30">
-                              <div className="relative w-full aspect-[1/1.414]">
-                                <img
-                                  src={src}
-                                  alt={key}
-                                  className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none"
-                                  style={{
-                                    transform: "scale(1.5) translateY(7.7%)",
-                                    transformOrigin: "center center",
-                                  }}
-                                />
-                              </div>
-                              <div className="text-xs text-gray-400 mt-1">
-                                매칭: {key}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </>
-                    );
+  <div className="mt-2 rounded-xl overflow-hidden bg-black/30">
+    {/* (선택) 버스시간표 업로드 버튼 */}
+    <div className="flex items-center justify-end py-1 pr-1 gap-2">
+      <input
+        type="file"
+        accept="image/*"
+        id="bus-upload"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (!f) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            setBusImgUrl(String(reader.result || ""));
+            setFlipBus(false); // 업로드 직후엔 앞면(행로표)부터
+          };
+          reader.readAsDataURL(f);
+        }}
+      />
+      <label
+        htmlFor="bus-upload"
+        className="px-2 py-1 rounded-md bg-gray-700 text-xs cursor-pointer hover:bg-gray-600"
+        title="버스 시간표 이미지 업로드"
+      >
+        버스표 업로드
+      </label>
+    </div>
+
+    {/* 플립 캔버스 */}
+    <div
+      className="relative w-full aspect-[1/1.414] select-none"
+      onDoubleClick={toggleFlip}     // 데스크탑 더블클릭
+      onTouchEnd={() => onTapEndCheck()} // 모바일 더블탭
+      style={{ perspective: "1000px" }}
+    >
+      <div
+        className="absolute inset-0 transition-transform duration-500"
+        style={{
+          transformStyle: "preserve-3d",
+          transform: flipBus ? "rotateY(180deg)" : "rotateY(0deg)",
+        }}
+      >
+        {/* 앞면: 행로표 */}
+        <img
+          src={src}
+          alt={key}
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          style={{
+            backfaceVisibility: "hidden",
+            transform: "rotateY(0deg) scale(1.5) translateY(7.7%)",
+            transformOrigin: "center center",
+          }}
+        />
+
+        {/* 뒷면: 버스 시간표 (있을 때만) */}
+        {busImgUrl && (
+          <img
+            src={busImgUrl}
+            alt="버스 시간표"
+            className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+            style={{
+              backfaceVisibility: "hidden",
+              transform: "rotateY(180deg)",
+            }}
+          />
+        )}
+      </div>
+    </div>
+
+    <div className="text-xs text-gray-400 mt-1 flex items-center justify-between">
+      <span>매칭: {key}</span>
+      {busImgUrl ? (
+        <span>{flipBus ? "버스 시간표" : "행로표"} • 더블탭/더블클릭 전환</span>
+      ) : (
+        <span className="opacity-70">버스표 업로드 후 더블탭 전환</span>
+      )}
+    </div>
+  </div>
+);
+
                   })()}
                 </div>
               </div>
