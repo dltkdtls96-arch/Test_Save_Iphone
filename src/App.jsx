@@ -1526,17 +1526,22 @@ export default function App() {
 // ================== ⬇️ 여기 바로 아래에 추가해 ==================
 const [altView, setAltView] = React.useState(false); // false=행로표, true=버스 시간표
 const lastTapRef = React.useRef(0);
-
+const lockRef = React.useRef(false); // 🔒 더블탭 후 잠금용
+  
 // 모바일 더블탭(320ms) 감지
 const onImgTouch = React.useCallback((e) => {
   const now = Date.now();
+  if (lockRef.current) return; // 잠금 중이면 무시
   if (now - lastTapRef.current < 320) {
     e.preventDefault();
+    lockRef.current = true; // 🔒 잠금 시작
     setAltView((v) => !v);
+    setTimeout(() => {
+      lockRef.current = false; // 🔓 잠금 해제 (연속 입력 방지)
+    }, 600);
   }
   lastTapRef.current = now;
 }, []);
-
 // 대상/날짜 바뀌면 기본(행로표)로 복귀
 React.useEffect(() => {
   setAltView(false);
