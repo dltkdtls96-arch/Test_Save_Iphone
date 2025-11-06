@@ -3182,7 +3182,7 @@ function RosterGrid({
                         {/* ✅ 여기 교체: 숫자 크게 + 색상 적용 */}
             <div
               className={`truncate font-extrabold leading-tight ${diaColorClass}`}
-              style={{ fontSize: "clamp(14px, 3.8vw, 18px)", letterSpacing: "0.2px" }}
+              style={{ fontSize: "clamp(11px, 3.8vw, 13px)", letterSpacing: "0.2px" }}
             >
               {diaLabel}
             </div>
