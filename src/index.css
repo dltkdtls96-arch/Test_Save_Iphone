@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* ✅ 여기에 스크롤 관련 CSS 블록 전부 아래쪽에 둬야 함 */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+}
+
+body {
+  position: fixed;
+  top: 0;
+  width: 100%;
+}
+
+/* ✅ 모든 div 스크롤바 숨기기 (WebKit 계열용) */
+div::-webkit-scrollbar {
+  display: none;
+}
+/* ✅ 가로모드(landscape)일 때 전체 화면 덮기 */
+@media screen and (orientation: landscape) {
+  body {
+    overflow: hidden !important;
+  }
+
+  #root::before {
+    content: "🔒 세로dgd 모드로 전환해주세요";
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    color: #fff;
+    font-size: 1.1rem;
+    font-weight: 500;
+    text-align: center;
+    z-index: 999999;
+  }
+
+  #root > * {
+    display: none !important;
+  }
+}
