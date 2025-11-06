@@ -3104,7 +3104,7 @@ function RosterGrid({
           row?.dia === undefined
             ? "-"
             : typeof row.dia === "number"
-            ? `${row.dia}dia`
+            ? `${row.dia}`
             : String(row.dia);
 
         const color = highlightMap?.[name];
