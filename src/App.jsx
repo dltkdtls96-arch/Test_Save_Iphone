@@ -2080,7 +2080,7 @@ export default function App() {
                               row?.dia === undefined
                                 ? "-"
                                 : typeof row.dia === "number"
-                                ? `${row.dia}dia`
+                                ? `${row.dia}D`
                                 : String(row.dia);
 
                             const dayType = getDayType(d, holidaySet);
