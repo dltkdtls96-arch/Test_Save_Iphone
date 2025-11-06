@@ -2206,7 +2206,7 @@ export default function App() {
                                     }
                                   >
                                     <div
-                                      className={`break-words text-[clamp(13px,1vw,11px)] leading-tight ${diaColorClass} mb-[5px]`}
+                                      className={`break-words text-[clamp(12px,1vw,11px)] leading-tight ${diaColorClass} mb-[4px]`}
                                     >
                                       {diaLabel}
                                     </div>
