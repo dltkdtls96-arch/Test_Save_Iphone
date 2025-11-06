@@ -3110,6 +3110,16 @@ function RosterGrid({
         const color = highlightMap?.[name];
         const style = color ? { backgroundColor: color, color: "white" } : {};
         const isSelected = selectedName === name;
+                // ✅ [여기에 추가] 주/야/휴 색상 결정
+        const rawDia = row?.dia;
+        const isOff =
+          typeof rawDia === "string" &&
+          /^(휴|비)/.test(rawDia.replace(/\s+/g, ""));
+        const diaColorClass = isOff
+          ? "text-gray-300"
+          : t.isNight
+          ? "text-sky-400"      // 야간 = 하늘
+          : "text-yellow-400";  // 주간 = 노랑
 
         return (
           <button
@@ -3169,7 +3179,13 @@ function RosterGrid({
             }`}
           >
             <div className="text-[11px] font-semibold truncate">{name}</div>
-            <div className="text-[10px] text-gray-200 truncate">{diaLabel}</div>
+                        {/* ✅ 여기 교체: 숫자 크게 + 색상 적용 */}
+            <div
+              className={`truncate font-extrabold leading-tight ${diaColorClass}`}
+              style={{ fontSize: "clamp(14px, 3.8vw, 18px)", letterSpacing: "0.2px" }}
+            >
+              {diaLabel}
+            </div>
           </button>
         );
       })}
