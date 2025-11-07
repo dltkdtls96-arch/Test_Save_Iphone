@@ -701,16 +701,13 @@ function useDaySwipeHandlers() {
 }
 // ⬆⬆ 여기까지
 
-import PasswordGate from "./lock/PasswordGate";   // ⬅ 추가
+import PasswordGate from "./lock/PasswordGate"; // ⬅ 추가
 
 /* ===========================================
  * App
  * ===========================================*/
 
-
-
 export default function App() {
-  
   const [selectedTab, setSelectedTab] = useState("home");
   // 전체교번 정렬 모드: 'person'(기존 사람 순번) | 'dia'(DIA 순서)
   const [orderMode, setOrderMode] = useState("person");
@@ -719,20 +716,20 @@ export default function App() {
   const today = stripTime(new Date());
   const [selectedDate, setSelectedDate] = useState(today);
   // ⬇︎ 추가: 좌우 스와이프 시 하루 전/후 이동
-// ⬇︎ 좌우 스와이프 시 하루 전/후 이동
-const goPrevDay = () => {
-  flushSync(() => {
-    setSelectedDate((d) => addDaysSafe(d, -1));
-  });
-  setAltView(false); // ✅ 날짜 변경 직후 동기적으로 복귀
-};
+  // ⬇︎ 좌우 스와이프 시 하루 전/후 이동
+  const goPrevDay = () => {
+    flushSync(() => {
+      setSelectedDate((d) => addDaysSafe(d, -1));
+    });
+    setAltView(false); // ✅ 날짜 변경 직후 동기적으로 복귀
+  };
 
-const goNextDay = () => {
-  flushSync(() => {
-    setSelectedDate((d) => addDaysSafe(d, 1));
-  });
-  setAltView(false); // ✅ 날짜 변경 직후 동기적으로 복귀
-};
+  const goNextDay = () => {
+    flushSync(() => {
+      setSelectedDate((d) => addDaysSafe(d, 1));
+    });
+    setAltView(false); // ✅ 날짜 변경 직후 동기적으로 복귀
+  };
 
   const [tempName, setTempName] = useState(""); // 홈 탭용 임시 이름
   // 👉 슬라이드 애니메이션을 위한 상태/참조
@@ -742,6 +739,99 @@ const goNextDay = () => {
 
   // 소속 선택
   const [selectedDepot, setSelectedDepot] = useState("안심");
+  // ✅ 근무 변경 저장소 (소속/날짜/이름 단위로 override 저장)
+  const [overridesByDepot, setOverridesByDepot] = useState({});
+
+  // ✅ 근무 편집 모달 상태
+  const [dutyModal, setDutyModal] = useState({
+    open: false,
+    date: null,
+    name: null,
+  });
+
+  // ✅ override 저장/적용 헬퍼
+  function setOverride(depot, dateObj, name, value /* string|null */) {
+    const iso = fmt(stripTime(new Date(dateObj)));
+    setOverridesByDepot((prev) => {
+      const depotMap = { ...(prev?.[depot] || {}) };
+      const dayMap = { ...(depotMap[iso] || {}) };
+      if (value == null) delete dayMap[name];
+      else dayMap[name] = value;
+      return { ...prev, [depot]: { ...depotMap, [iso]: dayMap } };
+    });
+  }
+  function applyOverrideToRow(row, depot, dateObj, name) {
+    const iso = fmt(stripTime(new Date(dateObj)));
+    const v = overridesByDepot?.[depot]?.[iso]?.[name];
+    if (!v) return row;
+
+    const patched = { ...(row || {}) };
+
+    const applyTemplate = (tpl) => {
+      if (!tpl) return;
+      patched.weekday = { ...tpl.weekday };
+      patched.saturday = { ...tpl.saturday };
+      patched.holiday = { ...tpl.holiday };
+    };
+
+    // 1) 휴/비번
+    if (v === "휴" || v === "비번") {
+      patched.dia = v;
+      applyTemplate(labelTemplates[v]); // 표에 있으면 시간 동기화
+      return patched;
+    }
+
+    // 2) '대n'
+    if (/^대\d+$/.test(v)) {
+      const n = Number(v.replace(/[^0-9]/g, ""));
+      // ✅ 라벨 그대로 저장 → 표시가 ‘대n’로 유지
+      patched.dia = `대${n}`;
+      // ✅ 시간도 ‘대n’용 템플릿 우선 사용, 없을 때만 숫자 DIA로 폴백
+      const k = `대${n}`.replace(/\s+/g, "");
+      applyTemplate(labelTemplates[k] || diaTemplates[n]);
+      return patched;
+    }
+
+    // 3) '주' / '야'
+    if (v === "주" || v === "야") {
+      patched.dia = v;
+      applyTemplate(labelTemplates[v]);
+      return patched;
+    }
+
+    // 4) 'nD'
+    if (/^\d+D$/.test(v)) {
+      const n = Number(v.replace("D", ""));
+      if (Number.isFinite(n)) {
+        patched.dia = n;
+        applyTemplate(diaTemplates[n]);
+      }
+      return patched;
+    }
+
+    return patched;
+  }
+
+  function rowAtDateForNameWithOverride(name, dateObj) {
+    const base = rowAtDateForName(name, dateObj);
+    return applyOverrideToRow(base, selectedDepot, dateObj, name);
+  }
+
+  // ✅ override 여부 체크
+  function hasOverride(depot, dateObj, name) {
+    const iso = fmt(stripTime(new Date(dateObj)));
+    return !!overridesByDepot?.[depot]?.[iso]?.[name];
+  }
+
+  // ✅ 근무 라벨 뽑기: mode = "calendar" | "roster"
+  function diaLabelOf(row, mode = "calendar") {
+    if (!row || row.dia === undefined) return "-";
+    if (typeof row.dia === "number") {
+      return mode === "calendar" ? `${row.dia}D` : `${row.dia}`; // 캘린더는 27D, 전체교번은 7
+    }
+    // 문자열(휴/비번/대n/주/야 등)은 그대로
+    return String(row.dia);
+  }
 
   // 소속별 회전 "기준일" 맵 (안심은 기본 2025-10-01, 나머지는 오늘)
   const defaultAnchorMap = useMemo(
@@ -800,8 +890,67 @@ const goNextDay = () => {
     [peopleRows]
   );
 
+  // 숫자 DIA별 시간 템플릿
+  const diaTemplates = React.useMemo(() => {
+    const map = {};
+    peopleRows.forEach((r) => {
+      const n = Number(r?.dia);
+      if (Number.isFinite(n) && !map[n]) {
+        map[n] = {
+          weekday: { ...r.weekday },
+          saturday: { ...r.saturday },
+          holiday: { ...r.holiday },
+        };
+      }
+    });
+    return map;
+  }, [peopleRows]);
+
+  // 문자열 레이블(대n/주/야/휴/비번)별 시간 템플릿
+  const labelTemplates = React.useMemo(() => {
+    const map = {};
+    peopleRows.forEach((r) => {
+      const d = r?.dia;
+      if (typeof d === "string") {
+        const key = d.replace(/\s+/g, ""); // '대 1' → '대1'
+        if (!map[key]) {
+          map[key] = {
+            weekday: { ...r.weekday },
+            saturday: { ...r.saturday },
+            holiday: { ...r.holiday },
+          };
+        }
+      }
+    });
+    return map;
+  }, [peopleRows]);
   // 내 이름/공휴일
   //const [myName, setMyName] = useState("");
+  // 표에서 등장한 근무값들로 자동 생성되는 선택지
+  const DUTY_OPTIONS = React.useMemo(() => {
+    const set = new Set(["휴", "비번"]); // 기본 상태 포함 (비/비번 혼용 보정)
+    peopleRows.forEach((r) => {
+      const d = r?.dia;
+      if (typeof d === "number") set.add(`${d}D`);
+      else if (typeof d === "string") {
+        const clean = d.replace(/\s+/g, "");
+        if (/^대\d+$/i.test(clean)) set.add(clean); // 대1~대n
+        if (/^대기\d+$/i.test(clean)) set.add(clean); // 대기1~대기n  ← 추가
+        else if (clean === "비") set.add("비번"); // '비' 표기 보정
+        else if (["주", "야", "휴", "비번"].includes(clean)) set.add(clean);
+      }
+    });
+
+    // 보기 좋은 정렬: 1D… → 대1… → 휴/비번 → 주/야
+    const orderKey = (v) => {
+      if (/^\d+D$/.test(v)) return parseInt(v); // 1D~37D
+      if (/^대\d+$/.test(v)) return 100 + parseInt(v.replace(/\D/g, ""));
+      if (/^대기\d+$/i.test(v)) return 200 + parseInt(v.replace(/\D/g, "")); // ‘대기n’은 ‘대n’ 다음
+      const fixed = { 휴: 1000, 비번: 1001, 주: 1002, 야: 1003 };
+      return fixed[v] ?? 9999;
+    };
+    return Array.from(set).sort((a, b) => orderKey(a) - orderKey(b));
+  }, [peopleRows]);
 
   // 소속별 내 이름
   const [myNameMap, setMyNameMap] = useState({
@@ -817,6 +966,12 @@ const goNextDay = () => {
   const [holidaysText, setHolidaysText] = useState("");
   const [newHolidayDate, setNewHolidayDate] = useState(""); // ✅ 추가 (공휴일 추가용)
   const lastClickedRef = React.useRef(null);
+  // ⬇️ lastClickedRef 바로 아래에 추가
+  const longPressTimerRef = React.useRef(null);
+  const longPressActiveRef = React.useRef(false);
+  const longPressDidFireRef = React.useRef(false); // 롱프레스 후 onClick 무시용
+  const LONG_MS = 600; // 롱프레스 임계
+
   const holidaySet = useMemo(() => {
     const s = new Set();
     holidaysText
@@ -1125,7 +1280,8 @@ const goNextDay = () => {
     if (!targetName) return;
 
     (async () => {
-      const row = rowAtDateForName(targetName, selectedDate);
+      const row = rowAtDateForNameWithOverride(targetName, selectedDate);
+
       const t = computeInOut(row, selectedDate, holidaySet, nightDiaThreshold);
       const key =
         typeof row?.dia === "number" ? routeKey(row.dia, t.combo) : "";
@@ -1236,7 +1392,7 @@ const goNextDay = () => {
   // 선택일 전체 로스터
   function rosterAt(date) {
     return nameList.map((n) => {
-      const r = rowAtDateForName(n, date);
+      const r = rowAtDateForNameWithOverride(n, date);
       return { name: n, row: r, dia: r?.dia };
     });
   }
@@ -1248,7 +1404,8 @@ const goNextDay = () => {
     const yester = getYesterday(selectedDate);
 
     const entriesToday = nameList.map((name) => {
-      const row = rowAtDateForName(name, selectedDate);
+      const row = rowAtDateForNameWithOverride(name, selectedDate);
+
       const todayDia = row?.dia;
 
       let type = "work"; // work | dae | biban | holiday
@@ -1271,7 +1428,8 @@ const goNextDay = () => {
       let yDiaNum = null;
       let yPrevLabel = null;
       if (type === "biban" || type === "dae") {
-        const yRow = rowAtDateForName(name, yester);
+        const yRow = rowAtDateForNameWithOverride(name, yester);
+
         yPrevLabel = yRow?.dia ?? null;
         const n = toDiaNum(yPrevLabel);
         yDiaNum = Number.isFinite(n) ? n : null;
@@ -1307,7 +1465,13 @@ const goNextDay = () => {
       .sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
 
     return { work, dae, biban, holiday };
-  }, [nameList, selectedDate, nightDiaThreshold, selectedDepot]);
+  }, [
+    nameList,
+    selectedDate,
+    nightDiaThreshold,
+    selectedDepot,
+    overridesByDepot,
+  ]);
   // === DIA 순서 그리드용 1차원 배열 ===
   const diaGridRows = useMemo(() => {
     if (!nameList?.length) return [];
@@ -1315,7 +1479,7 @@ const goNextDay = () => {
     const yester = getYesterday(selectedDate);
 
     const entries = nameList.map((name) => {
-      const rowToday = rowAtDateForName(name, selectedDate);
+      const rowToday = rowAtDateForNameWithOverride(name, selectedDate);
       const todayDia = rowToday?.dia;
 
       let type = "work"; // work | dae | biban | holiday
@@ -1337,7 +1501,8 @@ const goNextDay = () => {
       // 비번/대근은 전날 DIA를 함께 확인(정렬·꼬리표용)
       let yDiaNum = null;
       if (type === "biban" || type === "dae") {
-        const yRow = rowAtDateForName(name, yester);
+        const yRow = rowAtDateForNameWithOverride(name, yester);
+
         const n = toDiaNum(yRow?.dia);
         yDiaNum = Number.isFinite(n) ? n : null;
       }
@@ -1380,7 +1545,8 @@ const goNextDay = () => {
           typeof displayDia === "string" &&
           displayDia.trim().startsWith("대")
         ) {
-          const yRow = rowAtDateForName(name, yester);
+          const yRow = rowAtDateForNameWithOverride(name, yester);
+
           const yDia = yRow?.dia;
           const yNum = toDiaNum(yDia);
           let prevNight = false;
@@ -1395,7 +1561,8 @@ const goNextDay = () => {
 
         // 비번: 전날 야간이면 '25~' 혹은 '대5~'처럼 표기
         if (type === "biban") {
-          const yRow = rowAtDateForName(name, yester);
+          const yRow = rowAtDateForNameWithOverride(name, yester);
+
           const yDiaRaw = yRow?.dia;
           const yDia =
             typeof yDiaRaw === "string"
@@ -1414,7 +1581,13 @@ const goNextDay = () => {
         return { name, row: { ...row, dia: displayDia } };
       }
     );
-  }, [nameList, selectedDate, nightDiaThreshold, selectedDepot]);
+  }, [
+    nameList,
+    selectedDate,
+    nightDiaThreshold,
+    selectedDepot,
+    overridesByDepot,
+  ]);
 
   // 캘린더 그리드
   // 캘린더 그리드
@@ -1542,51 +1715,48 @@ const goNextDay = () => {
   const [dragYRoute, setDragYRoute] = useState(0);
   const [snapYHome, setSnapYHome] = useState(false);
   const [snapYRoute, setSnapYRoute] = useState(false);
-// ================== ⬇️ 여기 바로 아래에 추가해 ==================
+  // ================== ⬇️ 여기 바로 아래에 추가해 ==================
 
-// 모바일 더블탭(320ms) 감지
-const [altView, setAltView] = React.useState(false); // false=행로표, true=버스 시간표
-const longPressTimer = React.useRef(null);
-const longPressActive = React.useRef(false);
+  // 모바일 더블탭(320ms) 감지
+  const [altView, setAltView] = React.useState(false); // false=행로표, true=버스 시간표
+  const longPressTimer = React.useRef(null);
+  const longPressActive = React.useRef(false);
 
-const handleTouchStart = React.useCallback(() => {
-  longPressActive.current = true;
-  longPressTimer.current = setTimeout(() => {
-    if (longPressActive.current) {
-      setAltView((v) => !v); // 0.6초 이상 누르면 토글
-    }
-  }, 600); // 600ms = 롱탭 인식 시간
-}, []);
+  const handleTouchStart = React.useCallback(() => {
+    longPressActive.current = true;
+    longPressTimer.current = setTimeout(() => {
+      if (longPressActive.current) {
+        setAltView((v) => !v); // 0.6초 이상 누르면 토글
+      }
+    }, 600); // 600ms = 롱탭 인식 시간
+  }, []);
 
-const handleTouchEnd = React.useCallback(() => {
-  longPressActive.current = false;
-  clearTimeout(longPressTimer.current);
-}, []);
+  const handleTouchEnd = React.useCallback(() => {
+    longPressActive.current = false;
+    clearTimeout(longPressTimer.current);
+  }, []);
 
-// 1️⃣ 앱 처음 켤 때 무조건 행로표부터
-React.useEffect(() => {
-  setAltView(false);
-}, []);
-
-// 2️⃣ 다른 탭 갔다가 '행로표' 탭으로 돌아올 때도 초기화
-React.useEffect(() => {
-  if (selectedTab === "route") {
+  // 1️⃣ 앱 처음 켤 때 무조건 행로표부터
+  React.useEffect(() => {
     setAltView(false);
-  }
-}, [selectedTab]);
+  }, []);
 
-// 날짜가 바뀔 때마다 행로표로 초기화
-React.useEffect(() => {
-  setAltView(false);
-}, [selectedDate]);
+  // 2️⃣ 다른 탭 갔다가 '행로표' 탭으로 돌아올 때도 초기화
+  React.useEffect(() => {
+    if (selectedTab === "route") {
+      setAltView(false);
+    }
+  }, [selectedTab]);
 
+  // 날짜가 바뀔 때마다 행로표로 초기화
+  React.useEffect(() => {
+    setAltView(false);
+  }, [selectedDate]);
 
-
-// 대상/날짜 바뀌면 기본(행로표)로 복귀
-React.useEffect(() => {
-  setAltView(false);
-}, [routeTargetName, selectedDate]);
-
+  // 대상/날짜 바뀌면 기본(행로표)로 복귀
+  React.useEffect(() => {
+    setAltView(false);
+  }, [routeTargetName, selectedDate]);
 
   // 각 페이저 래퍼 & 패널 참조 (높이 측정용)
   const homeWrapRef = React.useRef(null);
@@ -1882,6 +2052,100 @@ React.useEffect(() => {
     setRouteTargetName("");
   }
   const isPortrait = usePortraitOnly(); // ✅ 추가
+  function DutyModal() {
+    if (!dutyModal.open) return null;
+    const { date, name } = dutyModal;
+    const iso = fmt(date);
+
+    const [pendingOpt, setPendingOpt] = React.useState(null);
+
+    return (
+      <div className="fixed inset-0 z-[9999] bg-black/60 flex items-end sm:items-center justify-center p-2">
+        <div
+          className="
+            w-[min(680px,100vw)]
+            rounded-2xl bg-gray-800 text-gray-100 p-3 shadow-lg
+            mb-[72px] sm:mb-0
+          "
+          style={{ marginBottom: "max(72px, env(safe-area-inset-bottom))" }}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="font-semibold">근무 변경</div>
+            <button
+              className="text-sm opacity-70"
+              onClick={() =>
+                setDutyModal({ open: false, date: null, name: null })
+              }
+            >
+              닫기
+            </button>
+          </div>
+
+          <div className="text-xs text-gray-300 mb-3">
+            {name} · {iso}
+          </div>
+
+          <div
+            className="grid gap-2 grid-cols-6 sm:grid-cols-8"
+            style={{ paddingBottom: "80px" }}
+          >
+            {DUTY_OPTIONS.map((opt) => {
+              const active = pendingOpt === opt;
+              return (
+                <button
+                  key={opt}
+                  onPointerDown={() => setPendingOpt(opt)} // ← 즉시 테두리 표시
+                  onClick={() => {
+                    if (pendingOpt === opt) {
+                      // 두 번째 클릭 → 확정
+                      setOverride(selectedDepot, date, name, opt);
+                      setDutyModal({ open: false, date: null, name: null });
+                    } else {
+                      // 첫 클릭 → 테두리만
+                      setPendingOpt(opt);
+                    }
+                  }}
+                  className={[
+                    "h-9 rounded-lg bg-gray-700 hover:bg-gray-600",
+                    "text-xs font-medium flex items-center justify-center",
+                    active ? "ring-2 ring-indigo-400" : "",
+                  ].join(" ")}
+                >
+                  {opt}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 flex items-center justify-between">
+            <div className="text-[11px] text-gray-400">
+              한 번 누르면 선택,{" "}
+              <span className="text-gray-200">두 번 누르면 반영</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setOverride(selectedDepot, date, name, null); // 해제
+                  setDutyModal({ open: false, date: null, name: null });
+                }}
+                className="px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-xs"
+              >
+                설정 해제
+              </button>
+              <button
+                onClick={() =>
+                  setDutyModal({ open: false, date: null, name: null })
+                }
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white"
+              >
+                완료
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <PasswordGate>
@@ -2050,24 +2314,24 @@ React.useEffect(() => {
                   )}
                 </div>
 
- {/* 요일 헤더 (일요일 시작) */}
- <div className="grid grid-cols-7 gap-1 text-center text-[11px] text-gray-300 mb-1">
-   {["일","월","화","수","목","금","토"].map((w, idx) => (
-     <div
-       key={w}
-       className={
-         "py-0.5 " +
-         (idx === 6
-           ? "text-blue-400"  // 토요일 파랑
-           : idx === 0
-           ? "text-red-400"   // 일요일 빨강
-           : "text-white")
-       }
-     >
-       {w}
-     </div>
-   ))}
- </div>
+                {/* 요일 헤더 (일요일 시작) */}
+                <div className="grid grid-cols-7 gap-1 text-center text-[11px] text-gray-300 mb-1">
+                  {["일", "월", "화", "수", "목", "금", "토"].map((w, idx) => (
+                    <div
+                      key={w}
+                      className={
+                        "py-0.5 " +
+                        (idx === 6
+                          ? "text-blue-400" // 토요일 파랑
+                          : idx === 0
+                          ? "text-red-400" // 일요일 빨강
+                          : "text-white")
+                      }
+                    >
+                      {w}
+                    </div>
+                  ))}
+                </div>
 
                 {/* 3달 가로 스와이프 달력 */}
                 <div
@@ -2133,7 +2397,11 @@ React.useEffect(() => {
                             const isOutside = d.getMonth() !== thisMonthIdx;
 
                             const activeName = tempName || myName;
-                            const row = rowAtDateForName(activeName, d);
+                            const row = rowAtDateForNameWithOverride(
+                              activeName,
+                              d
+                            );
+
                             const t = computeInOut(
                               row,
                               d,
@@ -2141,11 +2409,14 @@ React.useEffect(() => {
                               nightDiaThreshold
                             );
                             const diaLabel =
-                              row?.dia === undefined
+                              row?.dia == null
                                 ? "-"
-                                : typeof row.dia === "number"
-                                ? `${row.dia}D`
-                                : String(row.dia);
+                                : (hasOverride(selectedDepot, d, activeName)
+                                    ? "*"
+                                    : "") +
+                                  (typeof row.dia === "number"
+                                    ? `${row.dia}D`
+                                    : String(row.dia));
 
                             const dayType = getDayType(d, holidaySet);
                             const dayColor =
@@ -2180,7 +2451,7 @@ React.useEffect(() => {
                               ) {
                                 const nextDate = new Date(d);
                                 nextDate.setDate(d.getDate() + 1);
-                                const nextRow = rowAtDateForName(
+                                const nextRow = rowAtDateForNameWithOverride(
                                   activeName,
                                   nextDate
                                 );
@@ -2197,10 +2468,46 @@ React.useEffect(() => {
                             return (
                               <button
                                 key={i}
+                                // ⬇️ 롱프레스: 꾸욱 누르면 근무변경 모달
+                                onTouchStart={(e) => {
+                                  longPressDidFireRef.current = false;
+                                  longPressActiveRef.current = true;
+                                  clearTimeout(longPressTimerRef.current);
+                                  longPressTimerRef.current = setTimeout(() => {
+                                    if (!longPressActiveRef.current) return;
+                                    longPressDidFireRef.current = true; // 이 터치의 onClick 무시
+                                    const person = (
+                                      tempName ||
+                                      myName ||
+                                      ""
+                                    ).trim();
+                                    setDutyModal({
+                                      open: true,
+                                      date: stripTime(d),
+                                      name: person,
+                                    });
+                                  }, LONG_MS);
+                                }}
+                                onTouchMove={(e) => {
+                                  // 이동하면 롱프레스 취소 (필요시 이동량 체크 추가 가능)
+                                  longPressActiveRef.current = false;
+                                  clearTimeout(longPressTimerRef.current);
+                                }}
+                                onTouchEnd={(e) => {
+                                  clearTimeout(longPressTimerRef.current);
+                                  longPressActiveRef.current = false;
+                                  // 롱프레스가 발동했으면 onClick에서 가드로 무시
+                                }}
                                 onClick={() => {
+                                  // ⬅️ 롱프레스 직후 발생하는 클릭 이벤트 무시
+                                  if (longPressDidFireRef.current) {
+                                    longPressDidFireRef.current = false;
+                                    return;
+                                  }
+
                                   const iso2 = fmt(d);
                                   if (lastClickedRef.current === iso2) {
-                                    // 임시 대상(tempName)이 있을 때만 지정. 내이름(기본)인 경우 비워둔다.
+                                    // 두 번 탭 → 행로표 이동
                                     setRouteTargetName(
                                       tempName ? tempName : ""
                                     );
@@ -2208,6 +2515,7 @@ React.useEffect(() => {
                                     setRoutePage(0);
                                     setDragYRoute(0);
                                   } else {
+                                    // 한 번 탭 → 날짜 선택(파란 테두리)
                                     setSelectedDate(stripTime(d));
                                     lastClickedRef.current = iso2;
                                     setCalHasSelection(true);
@@ -2275,22 +2583,22 @@ React.useEffect(() => {
                                       {diaLabel}
                                     </div>
                                     <div className="flex flex-col gap-[3px] leading-[1.08]">
-                                     <div className="truncate text-[clamp(10px,1vw,11px)] max-w-[50px]">
-                                       {t.in}
-                                     </div>
-                                     <div className="truncate text-[clamp(9px,1vw,11px)] max-w-[50px]">
-                                       {t.out}
-                                     </div>
+                                      <div className="truncate text-[clamp(10px,1vw,11px)] max-w-[50px]">
+                                        {t.in}
+                                      </div>
+                                      <div className="truncate text-[clamp(9px,1vw,11px)] max-w-[50px]">
+                                        {t.out}
+                                      </div>
                                     </div>
                                     {/*
-                                    <div className="truncate text-[clamp(8px,1vw,11px)] max-w-[50px]">
-                                      {t.isNight && selectedDepot !== "교대" ? (
-                                        `${t.combo}`
-                                      ) : (
-                                        <span className="invisible">공백</span>
-                                      )}
-                                    </div>
-                                    */}
+      <div className="truncate text-[clamp(8px,1vw,11px)] max-w-[50px]">
+        {t.isNight && selectedDepot !== "교대" ? (
+          `${t.combo}`
+        ) : (
+          <span className="invisible">공백</span>
+        )}
+      </div>
+      */}
                                   </div>
                                 </div>
                               </button>
@@ -2372,6 +2680,7 @@ React.useEffect(() => {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
+                    selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeHomeP1.ref,
                       onStart: swipeHomeP1.onStart,
@@ -2379,6 +2688,9 @@ React.useEffect(() => {
                       onEnd: swipeHomeP1.onEnd(goPrevDay, goNextDay),
                       style: swipeHomeP1.style,
                     }}
+                    isOverridden={(name, d) =>
+                      hasOverride(selectedDepot, d, name)
+                    }
                   />
                 )}
 
@@ -2395,6 +2707,7 @@ React.useEffect(() => {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
+                    selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeHomeP1.ref,
                       onStart: swipeHomeP1.onStart,
@@ -2402,6 +2715,9 @@ React.useEffect(() => {
                       onEnd: swipeHomeP1.onEnd(goPrevDay, goNextDay),
                       style: swipeHomeP1.style,
                     }}
+                    isOverridden={(name, d) =>
+                      hasOverride(selectedDepot, d, name)
+                    }
                   />
                 )}
               </div>
@@ -2499,6 +2815,7 @@ React.useEffect(() => {
                   setRouteTargetName(name);
                   triggerRouteTransition();
                 }}
+                selectedDepot={selectedDepot}
                 daySwipe={{
                   ref: swipeRosterP0.ref,
                   onStart: swipeRosterP0.onStart,
@@ -2506,6 +2823,7 @@ React.useEffect(() => {
                   onEnd: swipeRosterP0.onEnd(goPrevDay, goNextDay),
                   style: swipeRosterP0.style,
                 }}
+                isOverridden={(name, d) => hasOverride(selectedDepot, d, name)}
               />
             )}
 
@@ -2522,6 +2840,7 @@ React.useEffect(() => {
                     window.triggerRouteTransition();
                   else setSelectedTab("route");
                 }}
+                selectedDepot={selectedDepot}
                 daySwipe={{
                   ref: swipeRosterP0.ref,
                   onStart: swipeRosterP0.onStart,
@@ -2529,6 +2848,7 @@ React.useEffect(() => {
                   onEnd: swipeRosterP0.onEnd(goPrevDay, goNextDay),
                   style: swipeRosterP0.style,
                 }}
+                isOverridden={(name, d) => hasOverride(selectedDepot, d, name)}
               />
             )}
           </div>
@@ -2676,7 +2996,11 @@ React.useEffect(() => {
                 >
                   {(() => {
                     const targetName = routeTargetName || myName;
-                    const row = rowAtDateForName(targetName, selectedDate);
+                    const row = rowAtDateForNameWithOverride(
+                      targetName,
+                      selectedDate
+                    );
+
                     const t = computeInOut(
                       row,
                       selectedDate,
@@ -2708,52 +3032,55 @@ React.useEffect(() => {
                         </div>
 
                         {(() => {
-  const key =
-    typeof row?.dia === "number" ? routeKey(row.dia, t.combo) : "";
-  const routeSrc = key ? routeImageMap[key] : "";
-  const busSrc = "/bus/timetable.png";
-  const showBus = altView || !routeSrc;
-  const showSrc = showBus ? busSrc : routeSrc;
-  if (!showSrc) return null;
+                          const key =
+                            typeof row?.dia === "number"
+                              ? routeKey(row.dia, t.combo)
+                              : "";
+                          const routeSrc = key ? routeImageMap[key] : "";
+                          const busSrc = "/bus/timetable.png";
+                          const showBus = altView || !routeSrc;
+                          const showSrc = showBus ? busSrc : routeSrc;
+                          if (!showSrc) return null;
 
-  return (
-    <div className="mt-2 rounded-xl overflow-hidden bg-black/30">
-      <div
-        className="relative w-full aspect-[1/1.414]"
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onMouseDown={handleTouchStart}  // PC에서도 마우스로 꾹 누를 수 있게
-        onMouseUp={handleTouchEnd}
-      >
-        <img
-          src={showSrc}
-          alt={showBus ? "bus-timetable" : key}
-          className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-transform duration-500 ease-in-out"
-          style={{
-            transform: showBus ? "none" : "scale(1.5) translateY(7.7%)",
-            transformOrigin: "center center",
-          }}
-        />
+                          return (
+                            <div className="mt-2 rounded-xl overflow-hidden bg-black/30">
+                              <div
+                                className="relative w-full aspect-[1/1.414]"
+                                onTouchStart={handleTouchStart}
+                                onTouchEnd={handleTouchEnd}
+                                onMouseDown={handleTouchStart} // PC에서도 마우스로 꾹 누를 수 있게
+                                onMouseUp={handleTouchEnd}
+                              >
+                                <img
+                                  src={showSrc}
+                                  alt={showBus ? "bus-timetable" : key}
+                                  className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-transform duration-500 ease-in-out"
+                                  style={{
+                                    transform: showBus
+                                      ? "none"
+                                      : "scale(1.5) translateY(7.7%)",
+                                    transformOrigin: "center center",
+                                  }}
+                                />
 
-        {/* 우상단 모드 배지 */}
-        <div className="absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
-          {showBus ? "셔틀 시간표" : "행로표"}
-        </div>
+                                {/* 우상단 모드 배지 */}
+                                <div className="absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
+                                  {showBus ? "셔틀 시간표" : "행로표"}
+                                </div>
 
-        {/* 하단 안내 */}
-        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-md text-[8px] bg-gray-900/70 text-white">
-          길게 눌러 {showBus ? "행로표" : "셔틀 시간"} 보기
-        </div>
-      </div>
+                                {/* 하단 안내 */}
+                                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-md text-[8px] bg-gray-900/70 text-white">
+                                  길게 눌러 {showBus ? "행로표" : "셔틀 시간"}{" "}
+                                  보기
+                                </div>
+                              </div>
 
-      <div className="text-xs text-gray-400 mt-1">
-        매칭: {showBus ? "bus/timetable.png" : key}
-      </div>
-    </div>
-  );
-})()}
-
-
+                              <div className="text-xs text-gray-400 mt-1">
+                                매칭: {showBus ? "bus/timetable.png" : key}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </>
                     );
                   })()}
@@ -2849,6 +3176,7 @@ React.useEffect(() => {
                       setRouteTargetName(name);
                       triggerRouteTransition();
                     }}
+                    selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeRouteP1.ref,
                       onStart: swipeRouteP1.onStart,
@@ -2856,6 +3184,9 @@ React.useEffect(() => {
                       onEnd: swipeRouteP1.onEnd(goPrevDay, goNextDay),
                       style: swipeRouteP1.style,
                     }}
+                    isOverridden={(name, d) =>
+                      hasOverride(selectedDepot, d, name)
+                    }
                   />
                 )}
 
@@ -2870,6 +3201,7 @@ React.useEffect(() => {
                       setRouteTargetName(name);
                       triggerRouteTransition();
                     }}
+                    selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeRouteP1.ref,
                       onStart: swipeRouteP1.onStart,
@@ -2877,6 +3209,9 @@ React.useEffect(() => {
                       onEnd: swipeRouteP1.onEnd(goPrevDay, goNextDay),
                       style: swipeRouteP1.style,
                     }}
+                    isOverridden={(name, d) =>
+                      hasOverride(selectedDepot, d, name)
+                    }
                   />
                 )}
               </div>
@@ -2948,12 +3283,10 @@ React.useEffect(() => {
 
         {/* 하단 고정 탭바 */}
         <FixedTabbarPortal>
-<nav
-  ref={tabbarRef}
-  className="bg-gray-900/90 backdrop-blur-md border-t border-gray-700 fixed left-0 right-0 bottom-0 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
->
-
-
+          <nav
+            ref={tabbarRef}
+            className="bg-gray-900/90 backdrop-blur-md border-t border-gray-700 fixed left-0 right-0 bottom-0 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]"
+          >
             <div className="flex justify-around items-center text-gray-300 text-xs">
               {/* 홈 */}
               <button
@@ -3031,6 +3364,7 @@ React.useEffect(() => {
           </nav>
         </FixedTabbarPortal>
       </div>
+      <DutyModal />
     </PasswordGate>
   );
 }
@@ -3088,6 +3422,8 @@ function RosterGrid({
   highlightMap,
   onPick,
   daySwipe, // ⬅︎ 추가
+  selectedDepot,
+  isOverridden,
 }) {
   const [selectedName, setSelectedName] = React.useState(null);
 
@@ -3106,12 +3442,10 @@ function RosterGrid({
       {rows.map(({ name, row }) => {
         const t = computeInOut(row, date, holidaySet, nightDiaThreshold);
         const diaLabel =
-          row?.dia === undefined
+          row?.dia == null
             ? "-"
-            : typeof row.dia === "number"
-            ? `${row.dia}`
-            : String(row.dia);
-
+            : (isOverridden?.(name, date) ? "*" : "") +
+              (typeof row.dia === "number" ? String(row.dia) : String(row.dia));
         const color = highlightMap?.[name];
         const style = color ? { backgroundColor: color, color: "white" } : {};
         const isSelected = selectedName === name;
@@ -3174,7 +3508,9 @@ function RosterGrid({
             }`}
           >
             <div className="text-[11px] font-semibold truncate">{name}</div>
-            <div className="text-[13px] font-extrabold text-gray-200 truncate">{diaLabel}</div>
+            <div className="text-[13px] font-extrabold text-gray-200 truncate">
+              {diaLabel}
+            </div>
           </button>
         );
       })}
