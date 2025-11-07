@@ -1175,6 +1175,7 @@ export default function App() {
       if (s.tablesByDepot) setTablesByDepot(s.tablesByDepot);
       if (s.myNameMap) setMyNameMap(s.myNameMap);
       if (s.selectedDepot) setSelectedDepot(s.selectedDepot);
+      if (s.overridesByDepot) setOverridesByDepot(s.overridesByDepot); // ✅ 복원 추가
 
       // 하위 호환(V2) → 안심에 이관
       if (!s.tablesByDepot && s.tableText) {
@@ -1336,6 +1337,7 @@ export default function App() {
       selectedDate: fmt(selectedDate),
       routeImageMap, // 서버 URL만 보관할 예정(2번에서 수정)
       compareSelected,
+      overridesByDepot,
     };
 
     const timer = setTimeout(() => {
@@ -1371,6 +1373,7 @@ export default function App() {
     selectedDate,
     routeImageMap,
     compareSelected,
+    overridesByDepot,
   ]);
 
   // ✅ RosterGrid에서 접근 가능하게 전역 등록
