@@ -54,7 +54,7 @@ export default function PasswordGate({ children }: { children: React.ReactNode }
   return (
     <div className="fixed inset-0 bg-black text-white flex flex-col items-center justify-center gap-6 select-none">
       <div className="text-3xl font-bold">암호 입력</div>
-      <div className="opacity-70">카카오톡 암호를 입력해 주세요.</div>
+      <div className="opacity-70">보안 관련 요청이 있어 설정함 (비밀번호:철도의날 /설정에서 끄기 변경 가능 추후 비밀번호 비공개).</div>
 
       {/* ●●●●●● 점 표시 */}
       <div className="flex gap-4">
