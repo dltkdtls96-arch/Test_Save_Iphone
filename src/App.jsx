@@ -701,11 +701,16 @@ function useDaySwipeHandlers() {
 }
 // ⬆⬆ 여기까지
 
+import PasswordGate from "./lock/PasswordGate";   // ⬅ 추가
+
 /* ===========================================
  * App
  * ===========================================*/
 
+
+
 export default function App() {
+  
   const [selectedTab, setSelectedTab] = useState("home");
   // 전체교번 정렬 모드: 'person'(기존 사람 순번) | 'dia'(DIA 순서)
   const [orderMode, setOrderMode] = useState("person");
@@ -1879,7 +1884,7 @@ React.useEffect(() => {
   const isPortrait = usePortraitOnly(); // ✅ 추가
 
   return (
-    <>
+    <PasswordGate>
       {!isPortrait && <LandscapeOverlay />}
       <div
         aria-hidden={!isPortrait}
@@ -3026,7 +3031,7 @@ React.useEffect(() => {
           </nav>
         </FixedTabbarPortal>
       </div>
-    </>
+    </PasswordGate>
   );
 }
 /* ---- 공통 컴포넌트 ---- */
