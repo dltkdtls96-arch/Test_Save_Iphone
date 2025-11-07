@@ -3243,6 +3243,9 @@ export default function App() {
               tablesByDepot,
               anchorDateByDepot, // ✅ 이걸 넘깁니다
               highlightMap,
+              overridesByDepot, // ✅ 추가
+              labelTemplates, // ✅ 추가 (대근/휴/비번 시간 템플릿)
+              diaTemplates, // ✅ 추가 (숫자 DIA 시간 템플릿)
               // ✨ 추가
             }}
           />
@@ -3543,10 +3546,23 @@ function CompareWeeklyBoard({
   setCompareSelected,
 
   slideViewportH,
+  overridesByDepot, // ✅ 추가
+  labelTemplates, // ✅ 추가
+  diaTemplates, // ✅ 추가
 }) {
   /* ----------------------------
    * 0) 유틸: 소속별 파싱/인덱싱
    * ---------------------------- */
+
+  // ✅ 근무변경 여부 체크(파라미터 블록 바로 아래)
+  const isOverridden = React.useCallback(
+    (name, depot, date) => {
+      const iso = fmt(stripTime(new Date(date)));
+      return overridesByDepot?.[depot]?.[iso]?.[name] != null;
+    },
+    [overridesByDepot]
+  );
+
   const parsedByDepot = React.useMemo(() => {
     const map = {};
     for (const depot of DEPOTS) {
@@ -3562,7 +3578,7 @@ function CompareWeeklyBoard({
     return map;
   }, [tablesByDepot]);
 
-  // 회전 규칙 기반: (name, depot, date) → row
+  // 회전 규칙 + 근무변경 적용: (name, depot, date) → row(patched)
   const rowAtDateFor = React.useCallback(
     (name, depot, date) => {
       const pack = parsedByDepot[depot];
@@ -3570,19 +3586,60 @@ function CompareWeeklyBoard({
       const { rows, nameMap } = pack;
       if (!nameMap.has(name) || rows.length === 0) return undefined;
 
+      // 1) 회전으로 오늘 row 구하기
       const baseIdx = nameMap.get(name);
-
-      // ✅ 소속별 기준일
       const anchorStr = anchorDateByDepot?.[depot];
       const anchor = anchorStr
         ? stripTime(new Date(anchorStr))
         : stripTime(new Date());
       const dd = Math.floor((stripTime(date) - anchor) / 86400000);
-
       const idx = (((baseIdx + dd) % rows.length) + rows.length) % rows.length;
-      return rows[idx];
+      const baseRow = rows[idx];
+
+      // 2) override 반영
+      const iso = fmt(stripTime(new Date(date)));
+      const v = overridesByDepot?.[depot]?.[iso]?.[name];
+      if (!v) return baseRow;
+
+      const patched = { ...(baseRow || {}) };
+      const applyTemplate = (tpl) => {
+        if (!tpl) return;
+        patched.weekday = { ...tpl.weekday };
+        patched.saturday = { ...tpl.saturday };
+        patched.holiday = { ...tpl.holiday };
+      };
+      // 휴/비번
+      if (v === "휴" || v === "비번") {
+        patched.dia = v;
+        applyTemplate(labelTemplates[v]);
+        return patched;
+      }
+      // 대n
+      if (/^대\d+$/.test(v)) {
+        const n = Number(v.replace(/[^0-9]/g, ""));
+        patched.dia = `대${n}`;
+        const k = `대${n}`.replace(/\s+/g, "");
+        applyTemplate(labelTemplates[k] || diaTemplates[n]);
+        return patched;
+      }
+      // 숫자 DIA
+      if (/^\d+$/.test(String(v))) {
+        const n = Number(v);
+        patched.dia = n;
+        applyTemplate(diaTemplates[n]);
+        return patched;
+      }
+      // 그 외 라벨은 표시만 교체
+      patched.dia = v;
+      return patched;
     },
-    [parsedByDepot, anchorDateByDepot]
+    [
+      parsedByDepot,
+      anchorDateByDepot,
+      overridesByDepot,
+      labelTemplates,
+      diaTemplates,
+    ]
   );
 
   /* -------------------------------------
@@ -3639,7 +3696,7 @@ function CompareWeeklyBoard({
     const arr = [];
     for (let i = 0; i < days.length; i += 7) arr.push(days.slice(i, i + 7));
     return arr;
-  }, [selectedDate]);
+  }, [selectedDate, monthGridMonday]);
 
   // 헤더 높이 + “맨위로” 플래그
   const headerRef = React.useRef(null);
@@ -3917,7 +3974,6 @@ function CompareWeeklyBoard({
       onTouchEnd={onTouchEnd}
     >
       {/* 상단바 */}
-      {/* 상단바 */}
       <div
         className="flex items-center justify-between gap-2 flex-wrap"
         data-no-gesture
@@ -3983,6 +4039,7 @@ function CompareWeeklyBoard({
           )}
         </div>
       </div>
+
       {/* 추가 패널 */}
       {pickerOpen && (
         <div
@@ -4028,9 +4085,10 @@ function CompareWeeklyBoard({
           </div>
         </div>
       )}
+
       {/* ===== 헤더 + 바디 래퍼 ===== */}
       <div className="relative mt-2" style={{ zIndex: 1 }}>
-        {/* 🔴 오늘 컬럼 전체(헤더+바디) 테두리 오버레이 — 마지막 사람에서 정확히 끝남 */}
+        {/* 🔴 오늘 컬럼 전체(헤더+바디) 테두리 오버레이 */}
         {todayColIndex >= 0 && (
           <div
             className="absolute pointer-events-none border-2 border-red-400 rounded-md"
@@ -4038,7 +4096,7 @@ function CompareWeeklyBoard({
               top: 0,
               left: `calc(${NAME_COL_W}px + ${todayColIndex} * ((100% - ${NAME_COL_W}px) / 7))`,
               width: `calc((100% - ${NAME_COL_W}px) / 7)`,
-              height: headerH + bodyH, // ✅ 실제 바디 높이만큼만
+              height: headerH + bodyH,
               zIndex: 4,
             }}
           />
@@ -4106,7 +4164,7 @@ function CompareWeeklyBoard({
             >
               <div
                 className="divide-y divide-gray-700 rounded-b-xl overflow-hidden"
-                ref={(el) => (weekBodyRefs.current[wi] = el)} // ✅ 각 주 컨텐츠 참조
+                ref={(el) => (weekBodyRefs.current[wi] = el)}
               >
                 {people.map(({ name, depot }) => (
                   <div
@@ -4142,21 +4200,30 @@ function CompareWeeklyBoard({
                         holidaySet,
                         nightDiaThreshold
                       );
+
+                      // 원래 DIA 라벨(제목/툴팁 용): 공백 제거
                       const dia =
                         row?.dia === undefined
                           ? "-"
                           : typeof row.dia === "number"
                           ? row.dia
                           : String(row.dia).replace(/\s+/g, "");
+
+                      // 화면 표시용 라벨(별표 앞에 붙이기 위해 원형 보존)
+                      const diaLabel =
+                        row?.dia == null
+                          ? ""
+                          : String(row.dia).replace(/\s+/g, "");
+                      const finalLabel = isOverridden(name, depot, d)
+                        ? diaLabel
+                          ? `*${diaLabel}`
+                          : "*"
+                        : diaLabel || "-";
+
                       const outside = d.getMonth() !== monthIdx;
 
                       // ==== 근무 상태 색상 판별 ====
-                      // ==== 근무 상태 색상 판별 (규칙: 다음날 비번이면 야간, 교대는 '야-휴') ====
-                      // ==== 근무 상태 색상 판별 ====
-                      // 기본 회색
                       let bgColor = "bg-gray-800/60";
-
-                      // 유틸
                       const norm = (v) =>
                         typeof v === "string" ? v.replace(/\s/g, "") : v;
                       const isOffDia = (v) =>
@@ -4166,24 +4233,19 @@ function CompareWeeklyBoard({
                         typeof v === "string" &&
                         /^\d{1,2}\s*:\s*\d{2}$/.test(v);
 
-                      // 오늘/다음날 DIA
                       const todayDia = norm(row?.dia);
                       const nextDay = addDaysSafe(d, 1);
                       const nextDia = norm(
                         rowAtDateFor(name, depot, nextDay)?.dia
                       );
 
-                      // 0) 오늘이 비번/휴면 무조건 회색
                       if (isOffDia(todayDia)) {
                         bgColor = "bg-gray-800/60";
                       } else {
-                        // 1) 야간 여부
-                        //   - 교대: '야' 다음이 '휴'
-                        //   - 그 외: 다음날 비번이거나, "퇴근이 아침"
-                        const MORNING_HOUR = 12; // 아침 기준 (<=11시). 필요하면 10/12로 조절하세요.
-                        const outH = hourFromStr(t.out); // (이미 있으신 헬퍼) -> number | null
-
+                        const MORNING_HOUR = 12;
+                        const outH = hourFromStr(t.out);
                         let isNight = false;
+
                         if (depot === "교대") {
                           isNight =
                             todayDia === "야" &&
@@ -4198,7 +4260,6 @@ function CompareWeeklyBoard({
                           isNight = nextIsBiban || outIsMorning;
                         }
 
-                        // 2) 주간 여부: 실제 시간 또는 s코드가 있을 때만 (야간이 아니어야 함)
                         const hasWork =
                           (isTime(t.in) ||
                             isTime(t.out) ||
@@ -4206,13 +4267,9 @@ function CompareWeeklyBoard({
                             isSCodeDay?.(t.out)) &&
                           !isNight;
 
-                        if (isNight) {
-                          bgColor = "bg-sky-500/30"; // 야간 = 파랑
-                        } else if (hasWork) {
-                          bgColor = "bg-yellow-500/30"; // 주간 = 노랑
-                        } else {
-                          bgColor = "bg-gray-800/60"; // 휴/비번 등 = 회색
-                        }
+                        if (isNight) bgColor = "bg-sky-500/30";
+                        else if (hasWork) bgColor = "bg-yellow-500/30";
+                        else bgColor = "bg-gray-800/60";
                       }
 
                       return (
@@ -4225,7 +4282,7 @@ function CompareWeeklyBoard({
                             d
                           )} • DIA ${dia} / ${t.in}~${t.out}`}
                         >
-                          <div className="font-semibold">{dia}</div>
+                          <div className="font-semibold">{finalLabel}</div>
                           <div className="mt-0.5">{t.in || "-"}</div>
                           <div>{t.out || "-"}</div>
                         </div>
