@@ -13,8 +13,8 @@ export type LockState = {
 };
 
 export const LOCK_KEY = "lock.v1";
-export const DEFAULT_PIN = "258000";   // ← 네가 원하는 값으로
-export const DEFAULT_LEN = 6;          // 자릿수도 같이 조절 가능
+export const DEFAULT_PIN = "0000";   // ← 네가 원하는 값으로
+export const DEFAULT_LEN = 4;          // 자릿수도 같이 조절 가능
 
 const toB64 = (buf: ArrayBuffer) =>
   btoa(String.fromCharCode(...new Uint8Array(buf)));
