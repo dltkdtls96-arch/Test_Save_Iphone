@@ -1,6 +1,7 @@
 // src/SettingsView.jsx
 import React from "react";
 import { Settings as SettingsIcon, Upload } from "lucide-react";
+import PasswordSettings from "./lock/PasswordSettings"; // 🔒 비밀번호 설정 UI
 
 export default function SettingsView(props) {
   const {
@@ -343,8 +344,15 @@ export default function SettingsView(props) {
                 * 색상을 탭하면 적용됩니다. ‘해제’로 원복.
               </div>
             </div>
+                       {/* 🔒 비밀번호 설정 */}
+            <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
+              <div className="font-semibold mb-2">비밀번호</div>
+              <PasswordSettings />
+            </div>
           </div>
         </section>
+
+        
 
         {/* 표 업로드/편집 */}
         <section>
