@@ -2732,12 +2732,12 @@ React.useEffect(() => {
 
         {/* 우상단 모드 배지 */}
         <div className="absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
-          {showBus ? "버스 시간표" : "행로표"}
+          {showBus ? "셔틀 시간표" : "행로표"}
         </div>
 
         {/* 하단 안내 */}
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2 py-1 rounded-lg text-[10px] bg-gray-900/70 text-white">
-          길게 눌러 전환
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-md text-[8px] bg-gray-900/70 text-white">
+          길게 눌러 {showBus ? "행로표" : "셔틀 시간"} 보기
         </div>
       </div>
 
@@ -3110,16 +3110,6 @@ function RosterGrid({
         const color = highlightMap?.[name];
         const style = color ? { backgroundColor: color, color: "white" } : {};
         const isSelected = selectedName === name;
-                // ✅ [여기에 추가] 주/야/휴 색상 결정
-        const rawDia = row?.dia;
-        const isOff =
-          typeof rawDia === "string" &&
-          /^(휴|비)/.test(rawDia.replace(/\s+/g, ""));
-        const diaColorClass = isOff
-          ? "text-gray-300"
-          : t.isNight
-          ? "text-sky-400"      // 야간 = 하늘
-          : "text-yellow-400";  // 주간 = 노랑
 
         return (
           <button
@@ -3179,13 +3169,7 @@ function RosterGrid({
             }`}
           >
             <div className="text-[11px] font-semibold truncate">{name}</div>
-                        {/* ✅ 여기 교체: 숫자 크게 + 색상 적용 */}
-            <div
-              className={`truncate font-extrabold leading-tight ${diaColorClass}`}
-              style={{ fontSize: "clamp(11px, 3.8vw, 13px)", letterSpacing: "0.2px" }}
-            >
-              {diaLabel}
-            </div>
+            <div className="text-[13px] font-extrabold text-gray-200 truncate">{diaLabel}</div>
           </button>
         );
       })}
