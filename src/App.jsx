@@ -4,6 +4,8 @@
 // App.jsx 최상단 import들 아래
 import React, { useEffect, useMemo, useState, useLayoutEffect } from "react";
 import { flushSync } from "react-dom";
+import { buildWakeICS, downloadWakeICSFile, nextDays } from "./utils/wakeIcs";
+import WakeIcsPanel from "./components/WakeIcsPanel"; // 패널 쓸 거면 유지, 안 쓰면 이 줄은 삭제
 
 const SettingsView = React.lazy(() => import("./SettingsView"));
 
@@ -301,6 +303,7 @@ function getRouteImageSrc(key) {
 }
 
 /* ---------- 유틸 ---------- */
+
 function fmt(d) {
   const tz = d.getTimezoneOffset() * 60000;
   return new Date(d.getTime() - tz).toISOString().slice(0, 10);
@@ -319,6 +322,41 @@ function stripTime(d) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
+
+function toHM(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(h)}:${pad(m)}`;
+}
+
+function pickStartHM(t) {
+  if (!t) return null;
+
+  for (const k of ["in", "on", "start", "begin"]) {
+    const v = t[k];
+    if (typeof v === "string" && /^\d{1,2}:\d{2}$/.test(v)) return v;
+  }
+  for (const k of ["in", "on", "start", "begin"]) {
+    const v = t[k];
+    if (v instanceof Date) return toHM(v.getHours() * 60 + v.getMinutes());
+  }
+  for (const k of [
+    "in",
+    "on",
+    "start",
+    "begin",
+    "inMin",
+    "onMin",
+    "startMin",
+  ]) {
+    const v = t[k];
+    if (typeof v === "number" && !Number.isNaN(v)) return toHM(v);
+  }
+  if (Array.isArray(t) && typeof t[0] === "number") return toHM(t[0]);
+  return null;
+}
+
 function diffDays(a, b) {
   return Math.floor((stripTime(a) - stripTime(b)) / 86400000);
 }
@@ -737,7 +775,6 @@ export default function App() {
   const [dragX, setDragX] = useState(0); // 손가락 따라 이동하는 x(px)
   const [isSnapping, setIsSnapping] = useState(false); // 스냅 중이면 true
 
-  // 소속 선택
   const [selectedDepot, setSelectedDepot] = useState("안심");
   // ✅ 근무 변경 저장소 (소속/날짜/이름 단위로 override 저장)
   const [overridesByDepot, setOverridesByDepot] = useState({});
@@ -1015,6 +1052,24 @@ export default function App() {
     교대: 5, // ⬅️ new (교대는 '야/휴'가 문자열이라 임계치 영향은 사실상 없음)
   });
   // 선택된 소속의 야간 기준값 (기존 nightDiaThreshold 대체)
+  // 기상 알람: 시간/기간 (로컬 저장)
+  const [wakeHours, setWakeHours] = React.useState(() => {
+    const v = Number(localStorage.getItem("wake.prepHours.v1"));
+    return Number.isFinite(v) && v > 0 ? v : 1;
+  });
+  const [wakeSpan, setWakeSpan] = React.useState(() => {
+    const v = Number(localStorage.getItem("wake.daysSpan.v1"));
+    return Number.isFinite(v) && v >= 7 ? v : 60;
+  });
+  React.useEffect(
+    () => localStorage.setItem("wake.prepHours.v1", String(wakeHours)),
+    [wakeHours]
+  );
+  React.useEffect(
+    () => localStorage.setItem("wake.daysSpan.v1", String(wakeSpan)),
+    [wakeSpan]
+  );
+
   const nightDiaThreshold = nightDiaByDepot[selectedDepot] ?? 25;
   const setNightDiaForDepot = (depot, val) =>
     setNightDiaByDepot((prev) => ({ ...prev, [depot]: val }));
@@ -1069,6 +1124,41 @@ export default function App() {
     // 복귀
     //window.scrollTo(0, y);
   }
+
+  // rowAtDateForNameWithOverride, computeInOut, holidaySet, nightDiaThreshold, selectedDepot가 스코프에 있어야 함
+  const getInTimeFor = React.useCallback(
+    (name, dateObj) => {
+      try {
+        const row = rowAtDateForNameWithOverride?.(name, dateObj);
+        if (!row) return null;
+
+        const t = computeInOut?.(row, dateObj, holidaySet, nightDiaThreshold);
+        // t.in 이 "HH:MM" 형태가 아니거나, 비번/휴무 등 OFF 성격이면 skip
+        if (!t || !t.in || OFF_WORDS.test(t.combo || "")) return null;
+
+        const dt = parseHmOn(dateObj, t.in);
+        return dt; // Date 또는 null
+      } catch (e) {
+        console.warn("[getInTimeFor] error:", e);
+        return null;
+      }
+    },
+    [holidaySet, nightDiaThreshold, selectedDepot]
+  ); // selectedDepot 의존(override 로직 때문)
+
+  // .ics 다운로드
+  const whoForExport = routeTargetName || myName;
+  const handleDownloadWakeICS = React.useCallback(() => {
+    const days = nextDays(wakeSpan);
+    const blob = buildWakeICS({
+      myName: whoForExport,
+      days,
+      getInTimeFor,
+      prepHours: wakeHours,
+      summaryPrefix: "기상 알람",
+    });
+    downloadWakeICSFile(blob, `wake-${whoForExport}.ics`);
+  }, [whoForExport, wakeSpan, wakeHours, getInTimeFor]);
 
   /* -----------------------
    * 1) 초기 로드: localStorage → 상태
@@ -1765,7 +1855,59 @@ export default function App() {
   const homeWrapRef = React.useRef(null);
   const homePanelRefs = [React.useRef(null), React.useRef(null)];
   const routeWrapRef = React.useRef(null);
-  const routePanelRefs = [React.useRef(null), React.useRef(null)];
+  const routePanelRefs = React.useMemo(
+    () => [React.createRef(), React.createRef(), React.createRef()],
+    []
+  );
+
+  // [NEW] 패널0의 출근시각 공유용 상태
+  const [panel0InHM, setPanel0InHM] = React.useState(null); // "HH:MM"
+  const [panel0InDate, setPanel0InDate] = React.useState(null); // Date
+
+  // [NEW] "HH:MM" → Date 로 만들기
+  const _pad2 = (n) => String(n).padStart(2, "0");
+  const _stripTime = (d) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const _hmToDate = (baseDate, hm /* "HH:MM" */) => {
+    if (!hm) return null;
+    const m = /^(\d{1,2}):(\d{2})$/.exec(hm);
+    if (!m) return null;
+    const [_, hh, mm] = m;
+    const base = _stripTime(baseDate);
+    return new Date(
+      base.getFullYear(),
+      base.getMonth(),
+      base.getDate(),
+      Number(hh),
+      Number(mm),
+      0,
+      0
+    );
+  };
+
+  // [NEW] 패널0에서 보여줄 대상의 출근시각을 항상 최신으로 계산
+  const routeP0 = React.useMemo(() => {
+    const targetName = routeTargetName || myName;
+    const row = rowAtDateForNameWithOverride(targetName, selectedDate);
+    const t = computeInOut(row, selectedDate, holidaySet, nightDiaThreshold); // t.in: "HH:MM" 또는 "-"
+    const inHM = t?.in && /^\d{1,2}:\d{2}$/.test(t.in) ? t.in : null;
+    const inDate = inHM ? _hmToDate(selectedDate, inHM) : null;
+
+    return { inHM, inDate };
+  }, [
+    routeTargetName,
+    myName,
+    selectedDate,
+    holidaySet,
+    nightDiaThreshold,
+    selectedDepot, // 소속 바뀌면 교번/시간 달라질 수 있음
+  ]);
+
+  // [NEW] 공유 상태 동기화
+  React.useEffect(() => {
+    setPanel0InHM(routeP0.inHM || null);
+    setPanel0InDate(routeP0.inDate || null);
+  }, [routeP0.inHM, routeP0.inDate]);
 
   // 활성 패널 높이로 래퍼 높이 맞추기
   const [homeHeight, setHomeHeight] = useState(0);
@@ -1822,7 +1964,7 @@ export default function App() {
   ]);
 
   // 수직 스와이프 핸들러 팩토리
-  function makeVerticalHandlers(kind /* 'home' | 'route' */) {
+  function makeVerticalHandlers(kind /* 'home' | 'route' */, maxPage = 1) {
     const swipeRef = React.useRef({ x: 0, y: 0, lock: null });
     const lastMoveRef = React.useRef({ y: 0, t: 0 });
     const [pendingDir, setPendingDir] = React.useState(null); // 'next' | 'prev' | null
@@ -1940,11 +2082,11 @@ export default function App() {
         setTimeout(() => setSnap(false), V_SNAP_MS);
       }
       */
-      if (goNext && page === 0) {
+      if (goNext && page < maxPage) {
         setPendingDir("next"); // 전환 예약
         setDrag(-height); // 현재 페이지 기준으로 -height까지 애니메
         // page는 아직 그대로 0 → overshoot 방지
-      } else if (goPrev && page === 1) {
+      } else if (goPrev && page > 0) {
         setPendingDir("prev");
         setDrag(height);
       } else {
@@ -1959,13 +2101,14 @@ export default function App() {
     const onTransitionEnd = () => {
       if (!pendingDir) return;
       if (kind === "home") {
-        if (pendingDir === "next") setHomePage(1);
-        else if (pendingDir === "prev") setHomePage(0);
+        if (pendingDir === "next") setHomePage((p) => Math.min(maxPage, p + 1));
+        if (pendingDir === "prev") setHomePage((p) => Math.max(0, p - 1));
         setDragYHome(0);
         setSnapYHome(false);
       } else {
-        if (pendingDir === "next") setRoutePage(1);
-        else if (pendingDir === "prev") setRoutePage(0);
+        if (pendingDir === "next")
+          setRoutePage((p) => Math.min(maxPage, p + 1));
+        if (pendingDir === "prev") setRoutePage((p) => Math.max(0, p - 1));
         setDragYRoute(0);
         setSnapYRoute(false);
       }
@@ -1988,7 +2131,7 @@ export default function App() {
   }
 
   const vHome = makeVerticalHandlers("home");
-  const vRoute = makeVerticalHandlers("route");
+  const vRoute = makeVerticalHandlers("route", 2); // 0,1,2 총 3장
 
   const swipeHomeP1 = useDaySwipeHandlers(); // 홈탭 panel1 (선택일 전체교번)
   const swipeRosterP0 = useDaySwipeHandlers(); // 전체탭 panel0
@@ -2873,20 +3016,26 @@ export default function App() {
             onWheel={(e) => {
               if (isRouteLocked) e.preventDefault();
               if (snapYRoute) return;
+
               const TH = 40;
-              if (e.deltaY > TH && routePage === 0) {
+              const MAX = 2; // 0..2
+              const H = routeWrapRef.current?.offsetHeight || 500;
+
+              if (e.deltaY > TH && routePage < MAX) {
+                // ↓ 다음 패널로
                 setSnapYRoute(true);
-                setDragYRoute(-(routeWrapRef.current?.offsetHeight || 500));
+                setDragYRoute(-H);
                 setTimeout(() => {
-                  setRoutePage(1);
+                  setRoutePage((p) => Math.min(MAX, p + 1));
                   setSnapYRoute(false);
                   setDragYRoute(0);
                 }, V_SNAP_MS);
-              } else if (e.deltaY < -TH && routePage === 1) {
+              } else if (e.deltaY < -TH && routePage > 0) {
+                // ↑ 이전 패널로
                 setSnapYRoute(true);
-                setDragYRoute(routeWrapRef.current?.offsetHeight || 500);
+                setDragYRoute(H);
                 setTimeout(() => {
-                  setRoutePage(0);
+                  setRoutePage((p) => Math.max(0, p - 1));
                   setSnapYRoute(false);
                   setDragYRoute(0);
                 }, V_SNAP_MS);
@@ -2897,7 +3046,7 @@ export default function App() {
               className="relative"
               style={{
                 transform: `translateY(${
-                  (routePage === 0 ? 0 : -slideViewportH) + dragYRoute
+                  -routePage * slideViewportH + dragYRoute
                 }px)`,
                 transition: snapYRoute
                   ? `transform ${V_SNAP_MS}ms ease-out`
@@ -3217,6 +3366,26 @@ export default function App() {
                     }
                   />
                 )}
+              </div>
+              {/* Panel 2: 기상 알람 (.ics) */}
+              <div
+                ref={routePanelRefs[2]}
+                className="bg-gray-800 rounded-2xl p-3 shadow mb-16"
+                style={{ minHeight: slideViewportH }}
+              >
+                <WakeIcsPanel
+                  who={routeTargetName || myName}
+                  selectedDate={selectedDate}
+                  // [NEW] 패널0 출근시간 전달
+                  panel0InDate={panel0InDate} // Date 우선
+                  panel0InHM={panel0InHM} // 보조 문자열 ("HH:MM")
+                  // 기존 전달값 유지(있으면)
+                  wakeHours={wakeHours}
+                  setWakeHours={setWakeHours}
+                  wakeSpan={wakeSpan}
+                  setWakeSpan={setWakeSpan}
+                  onDownload={handleDownloadWakeICS} // 부모에서 따로 처리하고 싶으면 유지, 아니면 생략 가능
+                />
               </div>
             </div>
           </div>
