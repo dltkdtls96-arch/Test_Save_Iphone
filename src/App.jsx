@@ -1,11 +1,12 @@
-// /project/workspace/src/App.jsx 
+// /project/workspace/src/App.jsx
 
 //import React, { useEffect, useMemo, useState } from "react";
 // App.jsx 최상단 import들 아래
 import React, { useEffect, useMemo, useState, useLayoutEffect } from "react";
 import { flushSync } from "react-dom";
-import { buildWakeICS, downloadWakeICSFile, nextDays } from "./utils/wakeIcs";
-import WakeIcsPanel from "./components/WakeIcsPanel"; // 패널 쓸 거면 유지, 안 쓰면 이 줄은 삭제
+// icons
+import { Route as RouteIcon } from "lucide-react";
+import WakeIcsPanel from "./components/WakeIcsPanel";
 
 const SettingsView = React.lazy(() => import("./SettingsView"));
 
@@ -302,7 +303,37 @@ function getRouteImageSrc(key) {
   return "";
 }
 
+
 /* ---------- 유틸 ---------- */
+// ▲ helpers 아래 아무데나 1번만 추가
+const SHUTTLE_HM = {
+  // 필요하면 네 환경에 맞게 채워 넣어
+  // s1: "06:31",
+  // s2: "06:35",
+  // s3: "06:41",
+  // s4: "06:55",
+  // s5: "07:02",
+};
+
+function toHMorNull(v) {
+  const s = String(v ?? "").trim();
+  const m = s.match(/^(\d{1,2}):([0-5]\d)$/);
+  if (!m) return null;
+  const hh = +m[1], mm = +m[2];
+  if (hh < 0 || hh > 23) return null;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function normalizeHM(v) {
+  const s = String(v ?? "").trim();
+  // 1) 이미 HH:MM 이면 그걸 사용
+  const hm = toHMorNull(s);
+  if (hm) return hm;
+  // 2) s1/s2/s3 같은 키를 매핑(있을 때만)
+  const mapped = SHUTTLE_HM[s.toLowerCase()];
+  return mapped ? toHMorNull(mapped) : null;
+}
+
 
 function fmt(d) {
   const tz = d.getTimezoneOffset() * 60000;
@@ -322,41 +353,6 @@ function stripTime(d) {
   x.setHours(0, 0, 0, 0);
   return x;
 }
-
-function toHM(mins) {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${pad(h)}:${pad(m)}`;
-}
-
-function pickStartHM(t) {
-  if (!t) return null;
-
-  for (const k of ["in", "on", "start", "begin"]) {
-    const v = t[k];
-    if (typeof v === "string" && /^\d{1,2}:\d{2}$/.test(v)) return v;
-  }
-  for (const k of ["in", "on", "start", "begin"]) {
-    const v = t[k];
-    if (v instanceof Date) return toHM(v.getHours() * 60 + v.getMinutes());
-  }
-  for (const k of [
-    "in",
-    "on",
-    "start",
-    "begin",
-    "inMin",
-    "onMin",
-    "startMin",
-  ]) {
-    const v = t[k];
-    if (typeof v === "number" && !Number.isNaN(v)) return toHM(v);
-  }
-  if (Array.isArray(t) && typeof t[0] === "number") return toHM(t[0]);
-  return null;
-}
-
 function diffDays(a, b) {
   return Math.floor((stripTime(a) - stripTime(b)) / 86400000);
 }
@@ -542,6 +538,8 @@ function computeInOut(row, date, holidaySet, nightDiaThreshold) {
       return { in: "-", out: "-", note: "비번", combo: "-", isNight: false };
     if (label.replace(/\s/g, "").startsWith("휴"))
       return { in: "-", out: "-", note: "휴무", combo: "-", isNight: false };
+    if (label === "교육" || label === "휴가")
+      return { in: "-", out: "-", note: label, combo: "-", isNight: false };
     if (label === "주" || label === "야") {
       const tType = getDayType(date, holidaySet);
       const src =
@@ -775,6 +773,7 @@ export default function App() {
   const [dragX, setDragX] = useState(0); // 손가락 따라 이동하는 x(px)
   const [isSnapping, setIsSnapping] = useState(false); // 스냅 중이면 true
 
+  // 소속 선택
   const [selectedDepot, setSelectedDepot] = useState("안심");
   // ✅ 근무 변경 저장소 (소속/날짜/이름 단위로 override 저장)
   const [overridesByDepot, setOverridesByDepot] = useState({});
@@ -811,10 +810,11 @@ export default function App() {
       patched.holiday = { ...tpl.holiday };
     };
 
-    // 1) 휴/비번
-    if (v === "휴" || v === "비번") {
+    // 1) 휴/비번/교육/휴가  ← 교육·휴가도 여기서 라벨로 고정
+    if (v === "휴" || v === "비번" || v === "교육" || v === "휴가") {
       patched.dia = v;
-      applyTemplate(labelTemplates[v]); // 표에 있으면 시간 동기화
+      // 표 안에 같은 라벨 행이 있다면 시간 템플릿 동기화 (없어도 OK)
+      applyTemplate(labelTemplates[v?.replace(/\s+/g, "")]);
       return patched;
     }
 
@@ -965,7 +965,7 @@ export default function App() {
   //const [myName, setMyName] = useState("");
   // 표에서 등장한 근무값들로 자동 생성되는 선택지
   const DUTY_OPTIONS = React.useMemo(() => {
-    const set = new Set(["휴", "비번"]); // 기본 상태 포함 (비/비번 혼용 보정)
+    const set = new Set(["비번", "휴", "교육", "휴가"]); // 기본 고정 옵션 4종
     peopleRows.forEach((r) => {
       const d = r?.dia;
       if (typeof d === "number") set.add(`${d}D`);
@@ -983,7 +983,7 @@ export default function App() {
       if (/^\d+D$/.test(v)) return parseInt(v); // 1D~37D
       if (/^대\d+$/.test(v)) return 100 + parseInt(v.replace(/\D/g, ""));
       if (/^대기\d+$/i.test(v)) return 200 + parseInt(v.replace(/\D/g, "")); // ‘대기n’은 ‘대n’ 다음
-      const fixed = { 휴: 1000, 비번: 1001, 주: 1002, 야: 1003 };
+      const fixed = { 비번: 1000, 휴: 1001, 주: 1002, 야: 1003 };
       return fixed[v] ?? 9999;
     };
     return Array.from(set).sort((a, b) => orderKey(a) - orderKey(b));
@@ -1052,24 +1052,6 @@ export default function App() {
     교대: 5, // ⬅️ new (교대는 '야/휴'가 문자열이라 임계치 영향은 사실상 없음)
   });
   // 선택된 소속의 야간 기준값 (기존 nightDiaThreshold 대체)
-  // 기상 알람: 시간/기간 (로컬 저장)
-  const [wakeHours, setWakeHours] = React.useState(() => {
-    const v = Number(localStorage.getItem("wake.prepHours.v1"));
-    return Number.isFinite(v) && v > 0 ? v : 1;
-  });
-  const [wakeSpan, setWakeSpan] = React.useState(() => {
-    const v = Number(localStorage.getItem("wake.daysSpan.v1"));
-    return Number.isFinite(v) && v >= 7 ? v : 60;
-  });
-  React.useEffect(
-    () => localStorage.setItem("wake.prepHours.v1", String(wakeHours)),
-    [wakeHours]
-  );
-  React.useEffect(
-    () => localStorage.setItem("wake.daysSpan.v1", String(wakeSpan)),
-    [wakeSpan]
-  );
-
   const nightDiaThreshold = nightDiaByDepot[selectedDepot] ?? 25;
   const setNightDiaForDepot = (depot, val) =>
     setNightDiaByDepot((prev) => ({ ...prev, [depot]: val }));
@@ -1124,41 +1106,6 @@ export default function App() {
     // 복귀
     //window.scrollTo(0, y);
   }
-
-  // rowAtDateForNameWithOverride, computeInOut, holidaySet, nightDiaThreshold, selectedDepot가 스코프에 있어야 함
-  const getInTimeFor = React.useCallback(
-    (name, dateObj) => {
-      try {
-        const row = rowAtDateForNameWithOverride?.(name, dateObj);
-        if (!row) return null;
-
-        const t = computeInOut?.(row, dateObj, holidaySet, nightDiaThreshold);
-        // t.in 이 "HH:MM" 형태가 아니거나, 비번/휴무 등 OFF 성격이면 skip
-        if (!t || !t.in || OFF_WORDS.test(t.combo || "")) return null;
-
-        const dt = parseHmOn(dateObj, t.in);
-        return dt; // Date 또는 null
-      } catch (e) {
-        console.warn("[getInTimeFor] error:", e);
-        return null;
-      }
-    },
-    [holidaySet, nightDiaThreshold, selectedDepot]
-  ); // selectedDepot 의존(override 로직 때문)
-
-  // .ics 다운로드
-  const whoForExport = routeTargetName || myName;
-  const handleDownloadWakeICS = React.useCallback(() => {
-    const days = nextDays(wakeSpan);
-    const blob = buildWakeICS({
-      myName: whoForExport,
-      days,
-      getInTimeFor,
-      prepHours: wakeHours,
-      summaryPrefix: "기상 알람",
-    });
-    downloadWakeICSFile(blob, `wake-${whoForExport}.ics`);
-  }, [whoForExport, wakeSpan, wakeHours, getInTimeFor]);
 
   /* -----------------------
    * 1) 초기 로드: localStorage → 상태
@@ -1855,59 +1802,11 @@ export default function App() {
   const homeWrapRef = React.useRef(null);
   const homePanelRefs = [React.useRef(null), React.useRef(null)];
   const routeWrapRef = React.useRef(null);
-  const routePanelRefs = React.useMemo(
-    () => [React.createRef(), React.createRef(), React.createRef()],
-    []
-  );
-
-  // [NEW] 패널0의 출근시각 공유용 상태
-  const [panel0InHM, setPanel0InHM] = React.useState(null); // "HH:MM"
-  const [panel0InDate, setPanel0InDate] = React.useState(null); // Date
-
-  // [NEW] "HH:MM" → Date 로 만들기
-  const _pad2 = (n) => String(n).padStart(2, "0");
-  const _stripTime = (d) =>
-    new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const _hmToDate = (baseDate, hm /* "HH:MM" */) => {
-    if (!hm) return null;
-    const m = /^(\d{1,2}):(\d{2})$/.exec(hm);
-    if (!m) return null;
-    const [_, hh, mm] = m;
-    const base = _stripTime(baseDate);
-    return new Date(
-      base.getFullYear(),
-      base.getMonth(),
-      base.getDate(),
-      Number(hh),
-      Number(mm),
-      0,
-      0
-    );
-  };
-
-  // [NEW] 패널0에서 보여줄 대상의 출근시각을 항상 최신으로 계산
-  const routeP0 = React.useMemo(() => {
-    const targetName = routeTargetName || myName;
-    const row = rowAtDateForNameWithOverride(targetName, selectedDate);
-    const t = computeInOut(row, selectedDate, holidaySet, nightDiaThreshold); // t.in: "HH:MM" 또는 "-"
-    const inHM = t?.in && /^\d{1,2}:\d{2}$/.test(t.in) ? t.in : null;
-    const inDate = inHM ? _hmToDate(selectedDate, inHM) : null;
-
-    return { inHM, inDate };
-  }, [
-    routeTargetName,
-    myName,
-    selectedDate,
-    holidaySet,
-    nightDiaThreshold,
-    selectedDepot, // 소속 바뀌면 교번/시간 달라질 수 있음
-  ]);
-
-  // [NEW] 공유 상태 동기화
-  React.useEffect(() => {
-    setPanel0InHM(routeP0.inHM || null);
-    setPanel0InDate(routeP0.inDate || null);
-  }, [routeP0.inHM, routeP0.inDate]);
+  const routePanelRefs = [
+    React.useRef(null),
+    React.useRef(null),
+    React.useRef(null),
+  ];
 
   // 활성 패널 높이로 래퍼 높이 맞추기
   const [homeHeight, setHomeHeight] = useState(0);
@@ -1964,7 +1863,7 @@ export default function App() {
   ]);
 
   // 수직 스와이프 핸들러 팩토리
-  function makeVerticalHandlers(kind /* 'home' | 'route' */, maxPage = 1) {
+  function makeVerticalHandlers(kind /* 'home' | 'route' */) {
     const swipeRef = React.useRef({ x: 0, y: 0, lock: null });
     const lastMoveRef = React.useRef({ y: 0, t: 0 });
     const [pendingDir, setPendingDir] = React.useState(null); // 'next' | 'prev' | null
@@ -2042,6 +1941,7 @@ export default function App() {
 
       const wrap = kind === "home" ? homeWrapRef.current : routeWrapRef.current;
       const page = kind === "home" ? homePage : routePage;
+      const MAX = kind === "home" ? 1 : 2; // home: 0..1, route: 0..2
       const setPage = kind === "home" ? setHomePage : setRoutePage;
       const setDrag = kind === "home" ? setDragYHome : setDragYRoute;
       const setSnap = kind === "home" ? setSnapYHome : setSnapYRoute;
@@ -2082,7 +1982,7 @@ export default function App() {
         setTimeout(() => setSnap(false), V_SNAP_MS);
       }
       */
-      if (goNext && page < maxPage) {
+      if (goNext && page < MAX) {
         setPendingDir("next"); // 전환 예약
         setDrag(-height); // 현재 페이지 기준으로 -height까지 애니메
         // page는 아직 그대로 0 → overshoot 방지
@@ -2101,14 +2001,13 @@ export default function App() {
     const onTransitionEnd = () => {
       if (!pendingDir) return;
       if (kind === "home") {
-        if (pendingDir === "next") setHomePage((p) => Math.min(maxPage, p + 1));
-        if (pendingDir === "prev") setHomePage((p) => Math.max(0, p - 1));
+        if (pendingDir === "next") setHomePage((p) => Math.min(p + 1, 1));
+        else if (pendingDir === "prev") setHomePage((p) => Math.max(p - 1, 0));
         setDragYHome(0);
         setSnapYHome(false);
       } else {
-        if (pendingDir === "next")
-          setRoutePage((p) => Math.min(maxPage, p + 1));
-        if (pendingDir === "prev") setRoutePage((p) => Math.max(0, p - 1));
+        if (pendingDir === "next") setRoutePage((p) => Math.min(p + 1, 2));
+        else if (pendingDir === "prev") setRoutePage((p) => Math.max(p - 1, 0));
         setDragYRoute(0);
         setSnapYRoute(false);
       }
@@ -2131,12 +2030,13 @@ export default function App() {
   }
 
   const vHome = makeVerticalHandlers("home");
-  const vRoute = makeVerticalHandlers("route", 2); // 0,1,2 총 3장
+  const vRoute = makeVerticalHandlers("route");
 
   const swipeHomeP1 = useDaySwipeHandlers(); // 홈탭 panel1 (선택일 전체교번)
   const swipeRosterP0 = useDaySwipeHandlers(); // 전체탭 panel0
   const swipeRouteP0 = useDaySwipeHandlers(); // 행로탭 panel0
   const swipeRouteP1 = useDaySwipeHandlers(); // 행로탭 panel1
+  const swipeRouteP2 = useDaySwipeHandlers(); // 행로탭 panel2 (알람/일정)
 
   // 업로드 (표)
   async function onUpload(e) {
@@ -2263,7 +2163,7 @@ export default function App() {
             })}
           </div>
 
-          <div className="mt-3 flex items-center justify-between">
+          <div className="mt-3 mb-6 flex items-center justify-between">
             <div className="text-[11px] text-gray-400">
               한 번 누르면 선택,{" "}
               <span className="text-gray-200">두 번 누르면 반영</span>
@@ -2292,6 +2192,45 @@ export default function App() {
       </div>
     );
   }
+
+/* =========================
+ * [ROUTE 공통 계산] — return 직전
+ * ========================= */
+const routeTarget = routeTargetName || myName;
+
+const routeRow = React.useMemo(
+  () => rowAtDateForNameWithOverride(routeTarget, selectedDate),
+  [routeTarget, selectedDate, selectedDepot]
+);
+
+const routeT = React.useMemo(
+  () => computeInOut(routeRow, selectedDate, holidaySet, nightDiaThreshold),
+  [routeRow, selectedDate, holidaySet, nightDiaThreshold]
+);
+
+const routeIn = routeT.in;
+const routeOut = routeT.out;
+const routeDiaLabel = routeRow?.dia == null ? "-" : String(routeRow.dia);
+const routeNote = `${routeT.combo}${routeT.isNight ? " (야간)" : ""}`;
+const iso = fmt(selectedDate);
+const wk = weekdaysKR[(selectedDate.getDay() + 6) % 7];
+
+// (패널0 이미지용 파생값)
+const routeKeyStr =
+  typeof routeRow?.dia === "number" ? routeKey(routeRow.dia, routeT.combo) : "";
+const routeImgSrc = routeKeyStr ? routeImageMap[routeKeyStr] : "";
+const routeShowBus = altView || !routeImgSrc;
+const routeShowSrc = routeShowBus ? "/bus/timetable.png" : routeImgSrc;
+
+// [ROUTE 공통 계산] — return 직전 아래에 이어서
+const startHM = normalizeHM(routeIn);
+const endHM   = normalizeHM(routeOut);
+
+// 디버그용(원하면)
+console.log("[WakeIcsPanel 전달]", { routeIn, routeOut, startHM, endHM });
+
+
+
 
   return (
     <PasswordGate>
@@ -3000,396 +2939,367 @@ export default function App() {
           </div>
         )}
 
-        {/* 행로표 */}
-        {selectedTab === "route" && (
-          <div
-            ref={routeWrapRef}
-            className="mt-4 select-none overflow-hidden rounded-2xl overscroll-contain"
-            style={{
-              height: slideViewportH,
-              touchAction: isRouteLocked ? "none" : "pan-y",
-            }}
-            onTouchStart={vRoute.onStart}
-            onTouchMove={vRoute.onMove}
-            onTouchEnd={vRoute.onEnd}
-            onTouchCancel={vRoute.onCancel}
-            onWheel={(e) => {
-              if (isRouteLocked) e.preventDefault();
-              if (snapYRoute) return;
+       {/* 행로표 */}
+{selectedTab === "route" && (
+  <div
+    ref={routeWrapRef}
+    className="mt-4 select-none overflow-hidden rounded-2xl overscroll-contain"
+    style={{
+      height: slideViewportH,
+      touchAction: isRouteLocked ? "none" : "pan-y",
+    }}
+    onTouchStart={vRoute.onStart}
+    onTouchMove={vRoute.onMove}
+    onTouchEnd={vRoute.onEnd}
+    onTouchCancel={vRoute.onCancel}
+    onWheel={(e) => {
+      if (isRouteLocked) e.preventDefault();
+      if (snapYRoute) return;
+      const TH = 40;
+      if (e.deltaY > TH && routePage < 2) {
+        setSnapYRoute(true);
+        setDragYRoute(-(routeWrapRef.current?.offsetHeight || 500));
+        setTimeout(() => {
+          setRoutePage((p) => Math.min(p + 1, 2));
+          setSnapYRoute(false);
+          setDragYRoute(0);
+        }, V_SNAP_MS);
+      } else if (e.deltaY < -TH && routePage > 0) {
+        setSnapYRoute(true);
+        setDragYRoute(routeWrapRef.current?.offsetHeight || 500);
+        setTimeout(() => {
+          setRoutePage((p) => Math.max(p - 1, 0));
+          setSnapYRoute(false);
+          setDragYRoute(0);
+        }, V_SNAP_MS);
+      }
+    }}
+  >
+    <div
+      className="relative"
+      style={{
+        transform: `translateY(${-routePage * slideViewportH + dragYRoute}px)`,
+        transition: snapYRoute ? `transform ${V_SNAP_MS}ms ease-out` : "none",
+        willChange: "transform",
+      }}
+      onTransitionEnd={vRoute.onTransitionEnd}
+    >
+      {/* Panel 0: 행로 카드(요약+이미지) */}
+      <div
+        id="route-panel0"
+        ref={routePanelRefs[0]}
+        className="bg-gray-800 rounded-2xl p-3 shadow shadow mb-10"
+        style={{ minHeight: slideViewportH }}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <User className="w-5 h-5" /> 행로표 ({routeTarget})
+          </h2>
+          <div className="flex gap-2 items-center">
+            <select
+              className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
+              value={selectedDepot}
+              onChange={(e) => setSelectedDepot(e.target.value)}
+            >
+              {DEPOTS.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
 
-              const TH = 40;
-              const MAX = 2; // 0..2
-              const H = routeWrapRef.current?.offsetHeight || 500;
-
-              if (e.deltaY > TH && routePage < MAX) {
-                // ↓ 다음 패널로
-                setSnapYRoute(true);
-                setDragYRoute(-H);
-                setTimeout(() => {
-                  setRoutePage((p) => Math.min(MAX, p + 1));
-                  setSnapYRoute(false);
-                  setDragYRoute(0);
-                }, V_SNAP_MS);
-              } else if (e.deltaY < -TH && routePage > 0) {
-                // ↑ 이전 패널로
-                setSnapYRoute(true);
-                setDragYRoute(H);
-                setTimeout(() => {
-                  setRoutePage((p) => Math.max(0, p - 1));
-                  setSnapYRoute(false);
-                  setDragYRoute(0);
-                }, V_SNAP_MS);
+            <input
+              type="date"
+              className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
+              value={fmt(selectedDate)}
+              onChange={(e) =>
+                setSelectedDate(stripTime(new Date(e.target.value)))
               }
+              title="날짜 선택"
+            />
+
+            <span className="text-[11px] text-gray-300">{wk}</span>
+
+            {fmt(selectedDate) !== fmt(today) && (
+              <button
+                className="px-2 py-1 rounded-xl bg-indigo-500 text-white text-xs"
+                onClick={() => setSelectedDate(stripTime(new Date()))}
+                title="오늘로"
+              >
+                오늘로
+              </button>
+            )}
+
+            {routeTargetName && (
+              <button
+                className="px-2 py-1 rounded-xl bg-orange-700 hover:bg-gray-600 text-xs"
+                onClick={() => setRouteTargetName("")}
+                title="내 이름으로 보기"
+              >
+                내이름
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 대상 이름 변경(임시) */}
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-sm text-gray-300">대상 이름</span>
+          <select
+            className="bg-gray-700 rounded-xl p-1 text-sm"
+            value={routeTarget}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === myName) setRouteTargetName("");
+              else setRouteTargetName(v);
             }}
           >
-            <div
-              className="relative"
-              style={{
-                transform: `translateY(${
-                  -routePage * slideViewportH + dragYRoute
-                }px)`,
-                transition: snapYRoute
-                  ? `transform ${V_SNAP_MS}ms ease-out`
-                  : "none",
-                willChange: "transform",
-              }}
-              onTransitionEnd={vRoute.onTransitionEnd}
-            >
-              {/* Panel 0: 행로 카드(요약+이미지) */}
+            {[myName, ...nameList.filter((n) => n !== myName)].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div
+          className="p-3 rounded-xl bg-gray-900/60 text-sm mt-3"
+          ref={swipeRouteP0.ref}
+          onTouchStart={swipeRouteP0.onStart}
+          onTouchMove={swipeRouteP0.onMove}
+          onTouchEnd={swipeRouteP0.onEnd(goPrevDay, goNextDay)}
+          style={swipeRouteP0.style}
+        >
+          <div>
+            이름: <b>{routeTarget}</b> / Dia: <b>{routeDiaLabel}</b>
+          </div>
+          <div>
+            선택일: {fmtWithWeekday(selectedDate)} / 상태: <b>{routeNote}</b>
+          </div>
+          <div className="mt-1">
+          출근: <b>{startHM ?? routeIn}</b> · 퇴근: <b>{endHM ?? routeOut}</b>
+          </div>
+
+          {/* 행로표/셔틀 이미지 */}
+          {routeShowSrc && (
+            <div className="mt-2 rounded-xl overflow-hidden bg-black/30">
               <div
-                id="route-panel0"
-                ref={routePanelRefs[0]}
-                className="bg-gray-800 rounded-2xl p-3 shadow shadow mb-10"
-                style={{ minHeight: slideViewportH }}
+                className="relative w-full aspect-[1/1.414]"
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+                onMouseDown={handleTouchStart}
+                onMouseUp={handleTouchEnd}
               >
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-semibold flex items-center gap-2">
-                    <User className="w-5 h-5" /> 행로표 (
-                    {routeTargetName || myName})
-                  </h2>
-                  <div className="flex gap-2 items-center">
-                    <select
-                      className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
-                      value={selectedDepot}
-                      onChange={(e) => setSelectedDepot(e.target.value)}
-                    >
-                      {DEPOTS.map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-
-                    <input
-                      type="date"
-                      className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
-                      value={fmt(selectedDate)}
-                      onChange={(e) =>
-                        setSelectedDate(stripTime(new Date(e.target.value)))
-                      }
-                      title="날짜 선택"
-                    />
-
-                    <span className="text-[11px] text-gray-300">
-                      {weekdaysKR[(selectedDate.getDay() + 6) % 7]}
-                    </span>
-
-                    {fmt(selectedDate) !== fmt(today) && (
-                      <button
-                        className="px-2 py-1 rounded-xl bg-indigo-500 text-white text-xs"
-                        onClick={() => setSelectedDate(stripTime(new Date()))}
-                        title="오늘로"
-                      >
-                        오늘로
-                      </button>
-                    )}
-
-                    {routeTargetName && (
-                      <button
-                        className="px-2 py-1 rounded-xl bg-orange-700 hover:bg-gray-600 text-xs"
-                        onClick={() => setRouteTargetName("")}
-                        title="내 이름으로 보기"
-                      >
-                        내이름
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* 대상 이름 변경(임시) */}
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="text-sm text-gray-300">대상 이름</span>
-                  <select
-                    className="bg-gray-700 rounded-xl p-1 text-sm"
-                    value={routeTargetName || myName}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === myName) setRouteTargetName("");
-                      else setRouteTargetName(v);
-                    }}
-                  >
-                    {[myName, ...nameList.filter((n) => n !== myName)].map(
-                      (n) => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
-                      )
-                    )}
-                  </select>
-                </div>
-
-                <div
-                  className="p-3 rounded-xl bg-gray-900/60 text-sm mt-3"
-                  ref={swipeRouteP0.ref}
-                  onTouchStart={swipeRouteP0.onStart}
-                  onTouchMove={swipeRouteP0.onMove}
-                  onTouchEnd={swipeRouteP0.onEnd(goPrevDay, goNextDay)}
-                  style={swipeRouteP0.style}
-                >
-                  {(() => {
-                    const targetName = routeTargetName || myName;
-                    const row = rowAtDateForNameWithOverride(
-                      targetName,
-                      selectedDate
-                    );
-
-                    const t = computeInOut(
-                      row,
-                      selectedDate,
-                      holidaySet,
-                      nightDiaThreshold
-                    );
-                    const diaLabel =
-                      row?.dia === undefined
-                        ? "-"
-                        : typeof row.dia === "number"
-                        ? `${row.dia}`
-                        : String(row.dia);
-
-                    return (
-                      <>
-                        <div>
-                          이름: <b>{targetName}</b> / Dia: <b>{diaLabel}</b>
-                        </div>
-                        <div>
-                          선택일: {fmtWithWeekday(selectedDate)} / 상태:{" "}
-                          <b>
-                            {t.combo}
-                            {t.isNight ? " (야간)" : ""}
-                          </b>
-                        </div>
-
-                        <div className="mt-1">
-                          출근: <b>{t.in}</b> · 퇴근: <b>{t.out}</b>
-                        </div>
-
-                        {(() => {
-                          const key =
-                            typeof row?.dia === "number"
-                              ? routeKey(row.dia, t.combo)
-                              : "";
-                          const routeSrc = key ? routeImageMap[key] : "";
-                          const busSrc = "/bus/timetable.png";
-                          const showBus = altView || !routeSrc;
-                          const showSrc = showBus ? busSrc : routeSrc;
-                          if (!showSrc) return null;
-
-                          return (
-                            <div className="mt-2 rounded-xl overflow-hidden bg-black/30">
-                              <div
-                                className="relative w-full aspect-[1/1.414]"
-                                onTouchStart={handleTouchStart}
-                                onTouchEnd={handleTouchEnd}
-                                onMouseDown={handleTouchStart} // PC에서도 마우스로 꾹 누를 수 있게
-                                onMouseUp={handleTouchEnd}
-                              >
-                                <img
-                                  src={showSrc}
-                                  alt={showBus ? "bus-timetable" : key}
-                                  className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-transform duration-500 ease-in-out"
-                                  style={{
-                                    transform: showBus
-                                      ? "none"
-                                      : "scale(1.5) translateY(7.7%)",
-                                    transformOrigin: "center center",
-                                  }}
-                                />
-
-                                {/* 우상단 모드 배지 */}
-                                <div className="absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
-                                  {showBus ? "셔틀 시간표" : "행로표"}
-                                </div>
-
-                                {/* 하단 안내 */}
-                                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-md text-[8px] bg-gray-900/70 text-white">
-                                  길게 눌러 {showBus ? "행로표" : "셔틀 시간"}{" "}
-                                  보기
-                                </div>
-                              </div>
-
-                              <div className="text-xs text-gray-400 mt-1">
-                                매칭: {showBus ? "bus/timetable.png" : key}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-
-              {/* Panel 1: 해당일 전체 교번 */}
-              <div
-                ref={routePanelRefs[1]}
-                className="bg-gray-800 rounded-2xl p-3 shadow mb-16"
-                style={{ minHeight: slideViewportH }}
-              >
-                {/* 1줄: 제목 + 날짜/요일/오늘로 */}
-                <div
-                  className="flex items-center justify-between mb-2"
-                  data-no-gesture
-                >
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <List className="w-5 h-5" /> 전체 교번
-                  </h3>
-
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {/* 날짜 선택 */}
-                    <input
-                      type="date"
-                      className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
-                      value={fmt(selectedDate)}
-                      onChange={(e) =>
-                        setSelectedDate(stripTime(new Date(e.target.value)))
-                      }
-                      title="날짜 선택"
-                    />
-                    {/* 요일 배지 */}
-                    <span className="px-2 py-0.5 rounded-full bg-gray-700 text-gray-200 text-[11px]">
-                      {weekdaysKR[(selectedDate.getDay() + 6) % 7]}
-                    </span>
-                    {/* 오늘로 (오늘이 아닐 때만) */}
-                    {fmt(selectedDate) !== fmt(today) && (
-                      <button
-                        className="px-2 py-1 rounded-xl bg-indigo-600 text-white text-xs hover:bg-indigo-500 active:scale-[.98] transition"
-                        onClick={() => setSelectedDate(stripTime(new Date()))}
-                        title="오늘로"
-                      >
-                        오늘로
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* 2줄: 소속 + 보기 전환 */}
-                <div
-                  className="flex items-center justify-between mb-2 gap-2 flex-wrap"
-                  data-no-gesture
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-300">소속</span>
-                    <select
-                      className="bg-gray-700 rounded-xl px-2 py-1 text-sm"
-                      value={selectedDepot}
-                      onChange={(e) => setSelectedDepot(e.target.value)}
-                      title="소속 선택"
-                    >
-                      {DEPOTS.map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <button
-                    className="rounded-full px-3 py-1 text-sm bg-cyan-600 text-white"
-                    onClick={() =>
-                      setOrderMode((m) => (m === "person" ? "dia" : "person"))
-                    }
-                    aria-pressed={orderMode === "dia"}
-                    title={
-                      orderMode === "dia" ? "순번으로 보기" : "DIA 순서로 보기"
-                    }
-                  >
-                    {orderMode === "dia" ? "순번으로 보기" : "DIA 순서로 보기"}
-                  </button>
-                </div>
-
-                {orderMode === "person" && (
-                  <RosterGrid
-                    rows={rosterAt(selectedDate)}
-                    holidaySet={holidaySet}
-                    date={selectedDate}
-                    nightDiaThreshold={nightDiaThreshold}
-                    highlightMap={highlightMap}
-                    onPick={(name) => {
-                      setRouteTargetName(name);
-                      triggerRouteTransition();
-                    }}
-                    selectedDepot={selectedDepot}
-                    daySwipe={{
-                      ref: swipeRouteP1.ref,
-                      onStart: swipeRouteP1.onStart,
-                      onMove: swipeRouteP1.onMove,
-                      onEnd: swipeRouteP1.onEnd(goPrevDay, goNextDay),
-                      style: swipeRouteP1.style,
-                    }}
-                    isOverridden={(name, d) =>
-                      hasOverride(selectedDepot, d, name)
-                    }
-                  />
-                )}
-
-                {orderMode === "dia" && (
-                  <RosterGrid
-                    rows={diaGridRows}
-                    holidaySet={holidaySet}
-                    date={selectedDate}
-                    nightDiaThreshold={nightDiaThreshold}
-                    highlightMap={highlightMap}
-                    onPick={(name) => {
-                      setRouteTargetName(name);
-                      triggerRouteTransition();
-                    }}
-                    selectedDepot={selectedDepot}
-                    daySwipe={{
-                      ref: swipeRouteP1.ref,
-                      onStart: swipeRouteP1.onStart,
-                      onMove: swipeRouteP1.onMove,
-                      onEnd: swipeRouteP1.onEnd(goPrevDay, goNextDay),
-                      style: swipeRouteP1.style,
-                    }}
-                    isOverridden={(name, d) =>
-                      hasOverride(selectedDepot, d, name)
-                    }
-                  />
-                )}
-              </div>
-              {/* Panel 2: 기상 알람 (.ics) */}
-              <div
-                ref={routePanelRefs[2]}
-                className="bg-gray-800 rounded-2xl p-3 shadow mb-16"
-                style={{ minHeight: slideViewportH }}
-              >
-                <WakeIcsPanel
-                  who={routeTargetName || myName}
-                  selectedDate={selectedDate}
-                  // [NEW] 패널0 출근시간 전달
-                  panel0InDate={panel0InDate} // Date 우선
-                  panel0InHM={panel0InHM} // 보조 문자열 ("HH:MM")
-                  // 기존 전달값 유지(있으면)
-                  wakeHours={wakeHours}
-                  setWakeHours={setWakeHours}
-                  wakeSpan={wakeSpan}
-                  setWakeSpan={setWakeSpan}
-                  onDownload={handleDownloadWakeICS} // 부모에서 따로 처리하고 싶으면 유지, 아니면 생략 가능
+                <img
+                  src={routeShowSrc}
+                  alt={routeShowBus ? "bus-timetable" : routeKeyStr}
+                  className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-transform duration-500 ease-in-out"
+                  style={{
+                    transform: routeShowBus
+                      ? "none"
+                      : "scale(1.5) translateY(7.7%)",
+                    transformOrigin: "center center",
+                  }}
                 />
+
+                <div className="absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
+                  {routeShowBus ? "셔틀 시간표" : "행로표"}
+                </div>
+
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-md text-[8px] bg-gray-900/70 text-white">
+                  길게 눌러 {routeShowBus ? "행로표" : "셔틀 시간"} 보기
+                </div>
+              </div>
+
+              <div className="text-xs text-gray-400 mt-1">
+                매칭: {routeShowBus ? "bus/timetable.png" : routeKeyStr}
               </div>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* Panel 1: 해당일 전체 교번 */}
+      <div
+        ref={routePanelRefs[1]}
+        className="bg-gray-800 rounded-2xl p-3 shadow mb-16"
+        style={{ minHeight: slideViewportH }}
+      >
+        {/* 1줄: 제목 + 날짜/요일/오늘로 */}
+        <div className="flex items-center justify-between mb-2" data-no-gesture>
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <List className="w-5 h-5" /> 전체 교번
+          </h3>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* 날짜 선택 */}
+            <input
+              type="date"
+              className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
+              value={fmt(selectedDate)}
+              onChange={(e) =>
+                setSelectedDate(stripTime(new Date(e.target.value)))
+              }
+              title="날짜 선택"
+            />
+            {/* 요일 배지 */}
+            <span className="px-2 py-0.5 rounded-full bg-gray-700 text-gray-200 text-[11px]">
+              {wk}
+            </span>
+            {/* 오늘로 */}
+            {fmt(selectedDate) !== fmt(today) && (
+              <button
+                className="px-2 py-1 rounded-xl bg-indigo-600 text-white text-xs hover:bg-indigo-500 active:scale-[.98] transition"
+                onClick={() => setSelectedDate(stripTime(new Date()))}
+                title="오늘로"
+              >
+                오늘로
+              </button>
+            )}
           </div>
+        </div>
+
+        {/* 2줄: 소속 + 보기 전환 */}
+        <div
+          className="flex items-center justify-between mb-2 gap-2 flex-wrap"
+          data-no-gesture
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-300">소속</span>
+            <select
+              className="bg-gray-700 rounded-xl px-2 py-1 text-sm"
+              value={selectedDepot}
+              onChange={(e) => setSelectedDepot(e.target.value)}
+              title="소속 선택"
+            >
+              {DEPOTS.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            className="rounded-full px-3 py-1 text-sm bg-cyan-600 text-white"
+            onClick={() =>
+              setOrderMode((m) => (m === "person" ? "dia" : "person"))
+            }
+            aria-pressed={orderMode === "dia"}
+            title={orderMode === "dia" ? "순번으로 보기" : "DIA 순서로 보기"}
+          >
+            {orderMode === "dia" ? "순번으로 보기" : "DIA 순서로 보기"}
+          </button>
+        </div>
+
+        {orderMode === "person" && (
+          <RosterGrid
+            rows={rosterAt(selectedDate)}
+            holidaySet={holidaySet}
+            date={selectedDate}
+            nightDiaThreshold={nightDiaThreshold}
+            highlightMap={highlightMap}
+            onPick={(name) => {
+              setRouteTargetName(name);
+              triggerRouteTransition();
+            }}
+            selectedDepot={selectedDepot}
+            daySwipe={{
+              ref: swipeRouteP1.ref,
+              onStart: swipeRouteP1.onStart,
+              onMove: swipeRouteP1.onMove,
+              onEnd: swipeRouteP1.onEnd(goPrevDay, goNextDay),
+              style: swipeRouteP1.style,
+            }}
+            isOverridden={(name, d) => hasOverride(selectedDepot, d, name)}
+          />
         )}
+
+        {orderMode === "dia" && (
+          <RosterGrid
+            rows={diaGridRows}
+            holidaySet={holidaySet}
+            date={selectedDate}
+            nightDiaThreshold={nightDiaThreshold}
+            highlightMap={highlightMap}
+            onPick={(name) => {
+              setRouteTargetName(name);
+              triggerRouteTransition();
+            }}
+            selectedDepot={selectedDepot}
+            daySwipe={{
+              ref: swipeRouteP1.ref,
+              onStart: swipeRouteP1.onStart,
+              onMove: swipeRouteP1.onMove,
+              onEnd: swipeRouteP1.onEnd(goPrevDay, goNextDay),
+              style: swipeRouteP1.style,
+            }}
+            isOverridden={(name, d) => hasOverride(selectedDepot, d, name)}
+          />
+        )}
+      </div>
+
+      {/* Panel 2: 알람/일정(WakeIcsPanel) */}
+      <div
+        ref={routePanelRefs[2]}
+        className="bg-gray-800 rounded-2xl p-3 shadow mb-16"
+        style={{ minHeight: slideViewportH }}
+      >
+        {/* 헤더 */}
+        <div className="flex items-center justify-between mb-2" data-no-gesture>
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <RouteIcon className="w-5 h-5" /> 알람/일정
+          </h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="date"
+              className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
+              value={fmt(selectedDate)}
+              onChange={(e) =>
+                setSelectedDate(stripTime(new Date(e.target.value)))
+              }
+              title="날짜 선택"
+            />
+            <span className="px-2 py-0.5 rounded-full bg-gray-700 text-gray-200 text-[11px]">
+              {wk}
+            </span>
+            {fmt(selectedDate) !== fmt(today) && (
+              <button
+                className="px-2 py-1 rounded-xl bg-indigo-600 text-white text-xs hover:bg-indigo-500 active:scale-[.98] transition"
+                onClick={() => setSelectedDate(stripTime(new Date()))}
+                title="오늘로"
+              >
+                오늘로
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 하루 좌우스와이프 래퍼 */}
+        <div
+          ref={swipeRouteP2.ref}
+          onTouchStart={swipeRouteP2.onStart}
+          onTouchMove={swipeRouteP2.onMove}
+          onTouchEnd={swipeRouteP2.onEnd(goPrevDay, goNextDay)}
+          style={swipeRouteP2.style}
+          className="rounded-xl bg-gray-900/60 p-3"
+        >
+<WakeIcsPanel
+  dateObj={selectedDate}
+  who={routeTarget}
+  // 패널0에서 보여주는 출근값을 ‘시간’으로 정규화해서 전달
+  startHM={startHM ?? toHMorNull(routeIn)}
+  // 필요하면 퇴근도 같이
+  endHM={endHM ?? toHMorNull(routeOut)}
+  // 디버그/표시용 원문(시간이 없을 때 안내에 사용)
+  rawLabel={routeIn}
+/>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
         {/* 비교(다중 사용자 동시 보기) */}
         {selectedTab === "compare" && (
           <CompareWeeklyBoard
@@ -3464,19 +3374,33 @@ export default function App() {
           >
             <div className="flex justify-around items-center text-gray-300 text-xs">
               {/* 홈 */}
-              <button
-                onClick={() => {
-                  setHomePage(0);
-                  setDragYHome(0);
-                  setSnapYHome(false);
-                  setSelectedTab("home");
-                }}
-                className={`flex flex-col items-center ${
-                  selectedTab === "home" ? "text-blue-400" : "text-gray-300"
-                }`}
-              >
-                <CalendarIcon className="w-5 h-5 mb-0.5" />홈
-              </button>
+<button
+  onClick={() => {
+    const alreadyHome = selectedTab === "home";
+
+    // 공통: 홈 패널 초기화
+    setHomePage(0);
+    setDragYHome(0);
+    setSnapYHome(false);
+
+    if (alreadyHome) {
+      // 👉 오늘로 이동
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // stripTime
+      setSelectedDate(today);
+      return;
+    }
+
+    // 아직 홈이 아니면 홈 탭으로만 전환
+    setSelectedTab("home");
+  }}
+  className={`flex flex-col items-center ${
+    selectedTab === "home" ? "text-blue-400" : "text-gray-300"
+  }`}
+>
+  <CalendarIcon className="w-5 h-5 mb-0.5" />홈
+</button>
+
 
               {/* 전체 */}
               <button
@@ -3501,9 +3425,10 @@ export default function App() {
                   selectedTab === "route" ? "text-blue-400" : "text-gray-300"
                 }`}
               >
-                <User className="w-5 h-5 mb-0.5" />
+                <RouteIcon className="w-5 h-5 mb-0.5" strokeWidth={1.75} />
                 행로
               </button>
+
               {/* 비교 */}
 
               <button
@@ -3778,11 +3703,25 @@ function CompareWeeklyBoard({
         patched.holiday = { ...tpl.holiday };
       };
       // 휴/비번
-      if (v === "휴" || v === "비번") {
+      if (v === "비번" || v === "휴") {
         patched.dia = v;
         applyTemplate(labelTemplates[v]);
         return patched;
       }
+
+      // 1-2) 교육/휴가: 휴무 계열로 처리 (템플릿 없으면 무시간)
+      if (v === "교육" || v === "휴가") {
+        patched.dia = v;
+        if (labelTemplates[v]) {
+          applyTemplate(labelTemplates[v]);
+        } else {
+          patched.weekday = { in: "", out: "" };
+          patched.saturday = { in: "", out: "" };
+          patched.holiday = { in: "", out: "" };
+        }
+        return patched;
+      }
+
       // 대n
       if (/^대\d+$/.test(v)) {
         const n = Number(v.replace(/[^0-9]/g, ""));
