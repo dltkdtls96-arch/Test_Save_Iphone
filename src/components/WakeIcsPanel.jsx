@@ -31,12 +31,37 @@ const parseHM = (hm) => {
   return { hh, mm };
 };
 
+/* 1) NEW: ISO(+타임존) 포맷으로 고정해서 단축어 AM/PM 오해 방지 */
+const fmtISOWithTZ = (d) => {
+  const x = toValidDate(d);
+  if (!x) return null;
+  const pad = (n) => String(n).padStart(2, "0");
+
+  const y = x.getFullYear();
+  const M = pad(x.getMonth() + 1);
+  const D = pad(x.getDate());
+  const H = pad(x.getHours());
+  const m = pad(x.getMinutes());
+  const s = "00"; // 정각 누락 방지: 초는 항상 00으로 고정
+
+  const tzMin = -x.getTimezoneOffset(); // KST면 +540
+  const sign = tzMin >= 0 ? "+" : "-";
+  const abs = Math.abs(tzMin);
+  const tzH = pad(Math.floor(abs / 60));
+  const tzM = pad(abs % 60);
+
+  return `${y}-${M}-${D}T${H}:${m}:${s}${sign}${tzH}:${tzM}`;
+};
+
 /* platform helpers */
 const isIOS = () => {
   if (typeof navigator === "undefined") return false;
   const ua = navigator.userAgent || "";
   const plat = navigator.platform || "";
-  return /iP(ad|hone|od)/.test(ua) || (plat === "MacIntel" && navigator.maxTouchPoints > 1);
+  return (
+    /iP(ad|hone|od)/.test(ua) ||
+    (plat === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
 };
 
 /* Shortcuts URL */
@@ -47,7 +72,8 @@ const buildShortcutURL = (name, payload) => {
 
 export default function WakeIcsPanel(props) {
   const who = props?.who ?? props?.name ?? "나";
-  const baseDate = toValidDate(props?.selectedDate ?? props?.date) ?? new Date();
+  const baseDate =
+    toValidDate(props?.selectedDate ?? props?.date) ?? new Date();
 
   // ----- 출근시간 계산 -----
   const inTime = React.useMemo(() => {
@@ -58,7 +84,15 @@ export default function WakeIcsPanel(props) {
     const hm = parseHM(props?.panel0InHM);
     if (hm) {
       const base = stripTime(baseDate);
-      return new Date(base.getFullYear(), base.getMonth(), base.getDate(), hm.hh, hm.mm, 0, 0);
+      return new Date(
+        base.getFullYear(),
+        base.getMonth(),
+        base.getDate(),
+        hm.hh,
+        hm.mm,
+        0,
+        0
+      );
     }
     return null;
   }, [props?.panel0InDate, props?.panel0InHM, baseDate]);
@@ -83,9 +117,12 @@ export default function WakeIcsPanel(props) {
   // 리스트 생성: now 이후만 포함, 타임스탬프 포함
   const makeHMList = React.useCallback(() => {
     if (!inTime) return [];
-    const startMs = inTime.getTime() - Math.max(0, Number(rangeFromMin) || 0) * 60 * 1000;
-    const endMs = inTime.getTime() - Math.max(0, Number(rangeToMin) || 0) * 60 * 1000;
-    const stepMs = Math.max(1, Math.floor(Number(rangeStepMin) || 1)) * 60 * 1000;
+    const startMs =
+      inTime.getTime() - Math.max(0, Number(rangeFromMin) || 0) * 60 * 1000;
+    const endMs =
+      inTime.getTime() - Math.max(0, Number(rangeToMin) || 0) * 60 * 1000;
+    const stepMs =
+      Math.max(1, Math.floor(Number(rangeStepMin) || 1)) * 60 * 1000;
 
     if (endMs < startMs) return [];
     const now = Date.now();
@@ -103,10 +140,14 @@ export default function WakeIcsPanel(props) {
   const preview = React.useMemo(() => {
     const list = makeHMList();
     if (!list.length) return { count: 0, first: null, last: null };
-    return { count: list.length, first: list[0].dt, last: list[list.length - 1].dt };
+    return {
+      count: list.length,
+      first: list[0].dt,
+      last: list[list.length - 1].dt,
+    };
   }, [makeHMList]);
 
-  // iOS 단축어(배치)
+  // 2) MOD: iOS 단축어(배치) – ISO(+TZ)로 전달
   const onIOSAlarmBatch = React.useCallback(() => {
     if (!inTime) return alert("출근 시간이 없습니다.");
     if (!isIOS()) return alert("iOS에서만 지원됩니다.");
@@ -115,8 +156,19 @@ export default function WakeIcsPanel(props) {
     if (!list.length) return alert("설정 범위에 유효한 시간이 없습니다.");
 
     const label = `[${who}] 기상 (${fmtYMD(inTime)})`;
-    const times = list.map(({ h, m }) => ({ h, m, label }));
-    const url = buildShortcutURL("교번-알람-만들기", { times });
+
+    // 핵심: 각 시각을 ISO(+타임존)로 고정해서 전달
+    const times = list.map(({ dt, h, m }) => ({
+      iso: fmtISOWithTZ(dt), // ✅ 단축어는 iso를 우선 사용
+      h, // (옵션) 구버전 호환
+      m, // (옵션) 구버전 호환
+      label,
+    }));
+
+    const url = buildShortcutURL("교번-알람-만들기", {
+      times,
+      baseDateIso: fmtISOWithTZ(inTime), // (옵션) 참고용
+    });
     window.location.href = url;
   }, [inTime, who, makeHMList]);
 
@@ -134,12 +186,12 @@ export default function WakeIcsPanel(props) {
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-3">
-        <h3 className="text-lg font-semibold leading-tight">
-  출근 알람
-  <span className="block text-xs font-normal text-gray-400">
-    (아이폰 단축어 추가 후 사용가능)
-  </span>
-</h3>
+          <h3 className="text-lg font-semibold leading-tight">
+            출근 알람
+            <span className="block text-xs font-normal text-gray-400">
+              (아이폰 단축어 추가 후 사용가능)
+            </span>
+          </h3>
           <div className="text-xs text-gray-300">
             <b>{who}</b> · <b>{fmtYMD(baseDate)}</b>
           </div>
@@ -152,7 +204,8 @@ export default function WakeIcsPanel(props) {
             패널0의 <b>출근 시각</b>을 전달받지 못했습니다.
             <br />
             <span className="text-xs text-gray-400">
-              (props.panel0InDate: Date|string 또는 props.panel0InHM: "HH:MM" 중 하나를 내려주세요)
+              (props.panel0InDate: Date|string 또는 props.panel0InHM: "HH:MM" 중
+              하나를 내려주세요)
             </span>
           </div>
         ) : (
@@ -164,19 +217,18 @@ export default function WakeIcsPanel(props) {
                 <span className="text-xs">({fmtYMD(inTime)})</span>
               </div>
               <div className="text-xs text-gray-300">
-                범위: <b>{rangeFromMin}분 전</b> ~ <b>{rangeToMin}분 전</b> · 간격{" "}
-                <b>{rangeStepMin}분</b>
+                범위: <b>{rangeFromMin}분 전</b> ~ <b>{rangeToMin}분 전</b> ·
+                간격 <b>{rangeStepMin}분</b>
               </div>
               <div className="text-xs text-gray-300">
-  예정 알람: <b>{preview.count}</b>개
-  {preview.count > 0 && (
-    <>
-      {" · "}첫 알람 <b>{fmtHMfromDate(preview.first)}</b>
-      {" · "}마지막 <b>{fmtHMfromDate(preview.last)}</b>
-    </>
-  )}
-</div>
-
+                예정 알람: <b>{preview.count}</b>개
+                {preview.count > 0 && (
+                  <>
+                    {" · "}첫 알람 <b>{fmtHMfromDate(preview.first)}</b>
+                    {" · "}마지막 <b>{fmtHMfromDate(preview.last)}</b>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* 배치 알람 범위: 드롭박스 */}
@@ -186,7 +238,11 @@ export default function WakeIcsPanel(props) {
                 <select
                   className="bg-gray-800 rounded-lg px-2 py-2"
                   value={rangeFromMin}
-                  onChange={(e) => setRangeFromMin(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  onChange={(e) =>
+                    setRangeFromMin(
+                      Math.max(0, parseInt(e.target.value, 10) || 0)
+                    )
+                  }
                 >
                   {renderOptions(minuteOptions, "분")}
                 </select>
@@ -196,7 +252,11 @@ export default function WakeIcsPanel(props) {
                 <select
                   className="bg-gray-800 rounded-lg px-2 py-2"
                   value={rangeToMin}
-                  onChange={(e) => setRangeToMin(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  onChange={(e) =>
+                    setRangeToMin(
+                      Math.max(0, parseInt(e.target.value, 10) || 0)
+                    )
+                  }
                 >
                   {renderOptions(minuteOptions, "분")}
                 </select>
@@ -206,7 +266,11 @@ export default function WakeIcsPanel(props) {
                 <select
                   className="bg-gray-800 rounded-lg px-2 py-2"
                   value={rangeStepMin}
-                  onChange={(e) => setRangeStepMin(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  onChange={(e) =>
+                    setRangeStepMin(
+                      Math.max(1, parseInt(e.target.value, 10) || 1)
+                    )
+                  }
                 >
                   {renderOptions(stepOptions, "분")}
                 </select>
