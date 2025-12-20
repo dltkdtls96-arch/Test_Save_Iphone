@@ -1,0 +1,9 @@
+/* App.css
+ * - 대부분의 스타일은 Tailwind (+ index.css 재매핑)로 처리
+ * - 여기서는 최상위 래퍼인 .app-shell만 가볍게 잡아줌
+ */
+
+.app-shell {
+  width: 100%;
+  height: 100%;
+}
