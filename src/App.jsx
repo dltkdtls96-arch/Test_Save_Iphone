@@ -3526,19 +3526,21 @@ export default function App() {
                           onMouseDown={handleTouchStart}
                           onMouseUp={handleTouchEnd}
                         >
-                          <img
-                            src={routeShowSrc}
-                            alt={routeShowBus ? "bus-timetable" : routeKeyStr}
-                            className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-transform duration-500 ease-in-out"
-                            style={{
-                              transform:
-                                routeShowBus ||
-                                ["월배", "문양", "경산"].includes(selectedDepot)
-                                  ? "none"
-                                  : "scale(1.5) translateY(7.7%)",
-                              transformOrigin: "center center",
-                            }}
-                          />
+<img
+  src={routeShowSrc}
+  alt={routeShowBus ? "bus-timetable" : routeKeyStr}
+  className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-transform duration-500 ease-in-out"
+  style={{
+    transform:
+      routeShowBus || ["월배", "문양"].includes(selectedDepot)
+        ? "none"
+        : selectedDepot === "경산"
+        ? "scale(1.2) translateY(7.7%)" // ← 경산만 여기 숫자 조정
+        : "scale(1.5) translateY(7.7%)", // ← 나머지는 기존 1.5 유지
+    transformOrigin: "center center",
+  }}
+/>
+
 
                           <div className="absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
                             {routeShowBus ? "셔틀 시간표" : "행로표"}
