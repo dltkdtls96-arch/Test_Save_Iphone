@@ -490,7 +490,7 @@ const kyeongTableTSV = `순번\t이름\tdia\t평일출근\t평일퇴근\t토요�
 42\t이의준\t휴11\t\t\t\t\t\t
 43\t신종섭\t7\t7:14\t16:33\ts1\ts1\ts4\ts4
 44\t박도환\t18\t11:20\t20:08\t12:04\t20:14\t11:41\t20:15
-45\t박희창\t29\t18:46\t8:24\t18:50\t8:30\t18:53\t8:34
+45\t박희창\t29\t19:02\t7:51\t19:02\t7:54\t19:10\t7:54
 46\t오형국\t29~\t\t\t\t\t\t
 47\t황종만\t휴12\t\t\t\t\t\t
 48\t조재범\t8\t7:44\t17:41\t7:27\t15:59\t6:54\t15:35
@@ -504,7 +504,6 @@ const kyeongTableTSV = `순번\t이름\tdia\t평일출근\t평일퇴근\t토요�
 56\t송호철\t21\t15:24\t9:14\t15:41\t9:26\t5:25\t8:04
 57\t이상백\t21~\t\t\t\t\t\t
 58\t장승필\t휴15\t\t\t\t\t\t`;
-
 
 // App.jsx 최상단 상수/유틸 근처
 const ansimGlobs = import.meta.glob("./ansim/*.png", {
@@ -3526,21 +3525,21 @@ export default function App() {
                           onMouseDown={handleTouchStart}
                           onMouseUp={handleTouchEnd}
                         >
-<img
-  src={routeShowSrc}
-  alt={routeShowBus ? "bus-timetable" : routeKeyStr}
-  className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-transform duration-500 ease-in-out"
-  style={{
-    transform:
-      routeShowBus || ["월배", "문양"].includes(selectedDepot)
-        ? "none"
-        : selectedDepot === "경산"
-        ? "scale(1.2) translateY(7.7%)" // ← 경산만 여기 숫자 조정
-        : "scale(1.5) translateY(7.7%)", // ← 나머지는 기존 1.5 유지
-    transformOrigin: "center center",
-  }}
-/>
-
+                          <img
+                            src={routeShowSrc}
+                            alt={routeShowBus ? "bus-timetable" : routeKeyStr}
+                            className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-transform duration-500 ease-in-out"
+                            style={{
+                              transform:
+                                routeShowBus ||
+                                ["월배", "문양"].includes(selectedDepot)
+                                  ? "none"
+                                  : selectedDepot === "경산"
+                                  ? "scale(1.2) translateY(7.7%)" // ← 경산만 여기 숫자 조정
+                                  : "scale(1.5) translateY(7.7%)", // ← 나머지는 기존 1.5 유지
+                              transformOrigin: "center center",
+                            }}
+                          />
 
                           <div className="absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
                             {routeShowBus ? "셔틀 시간표" : "행로표"}
