@@ -61,10 +61,11 @@ export default function SettingsView(props) {
 
     // 기준일 자동 설정
     const defaultAnchorByDepot = {
-      문양: "2025-10-01",
-      월배: "2025-11-01",
+      문양: "2026-01-21",
+      월배: "2026-03-01",
       안심: "2025-10-01",
       교대: "2025-09-29",
+      경산: "2025-12-28",
     };
 
     const defaultAnchor = defaultAnchorByDepot[selectedDepot];
@@ -171,7 +172,7 @@ export default function SettingsView(props) {
                 {/* ✅ 안심 선택 시 안내 문구 */}
                 {selectedDepot === "안심" && (
                   <span className="text-xs text-amber-300">
-                    안심은 10월 1일로 하세요
+                    {/* 안심은 10월 1일로 하세요*/}
                   </span>
                 )}
 
@@ -185,13 +186,13 @@ export default function SettingsView(props) {
 
               {selectedDepot === "문양" && (
                 <span className="text-xs text-amber-300">
-                  문양은 10월 1일로 하세요
+                  {/*문양은 1월 21일로 하세요*/}
                 </span>
               )}
 
               {selectedDepot === "월배" && (
                 <span className="text-xs text-amber-300">
-                  월배은 11월 1일로 하세요
+                  {/*월배은 11월 1일로 하세요*/}
                 </span>
               )}
 
@@ -423,11 +424,6 @@ export default function SettingsView(props) {
               <div className="text-xs text-gray-400 mt-2">
                 * 색상을 탭하면 적용됩니다. ‘해제’로 원복.
               </div>
-            </div>
-            {/* 🔒 비밀번호 설정 */}
-            <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
-              <div className="font-semibold mb-2">비밀번호</div>
-              <PasswordSettings />
             </div>
           </div>
         </section>
