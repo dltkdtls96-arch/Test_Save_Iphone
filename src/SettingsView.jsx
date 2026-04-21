@@ -47,6 +47,7 @@ export default function SettingsView(props) {
     // ─── 새 props ───
     commonMap,
     setCommonMap,
+    peopleRows,
   } = props;
 
   const palette = [
@@ -73,8 +74,9 @@ export default function SettingsView(props) {
 
   // 이름 편집 상태
   const [editModeOn, setEditModeOn] = React.useState(false);
-  const [nameEditIdx, setNameEditIdx] = React.useState(-1);
-  const [nameEditValue, setNameEditValue] = React.useState("");
+  const [editingIdx, setEditingIdx] = React.useState(-1);
+  const [editField, setEditField] = React.useState(null); // "name" | "phone"
+  const [editValue, setEditValue] = React.useState("");
 
   // 공휴일 자동 로딩
   const [holidayLoading, setHolidayLoading] = React.useState(false);
@@ -143,67 +145,92 @@ export default function SettingsView(props) {
   }
 
   // ─────────────────────────────────────────
-  //  이름 편집
+  //  이름/전화번호 편집
   // ─────────────────────────────────────────
-  const beginEditName = (idx, currentName) => {
-    setNameEditIdx(idx);
-    setNameEditValue(currentName || "");
+  const beginEdit = (idx, field, currentValue) => {
+    setEditingIdx(idx);
+    setEditField(field);
+    setEditValue(currentValue || "");
   };
 
-  const commitEditName = async () => {
-    if (nameEditIdx < 0) return;
-    const newName = nameEditValue.trim();
-    const oldName = nameList?.[nameEditIdx] || "";
-    if (!newName || newName === oldName) {
-      setNameEditIdx(-1);
-      return;
-    }
+  const cancelEdit = () => {
+    setEditingIdx(-1);
+    setEditField(null);
+    setEditValue("");
+  };
 
-    // 1) commonMap[key].names 에 반영
-    const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
-    if (commonMap?.[key]?.names?.length) {
-      const newNames = [...commonMap[key].names];
-      newNames[nameEditIdx] = newName;
-      const nextMap = {
-        ...commonMap,
-        [key]: { ...commonMap[key], names: newNames },
-      };
-      setCommonMap?.(nextMap);
-      try {
-        await saveCommonDataToDB(nextMap);
-      } catch {}
-    }
+  const commitEdit = async () => {
+    if (editingIdx < 0 || !editField) return;
+    const newVal = editValue.trim();
+    const oldRow = peopleRows?.[editingIdx];
 
-    // 2) TSV 텍스트에서도 해당 줄의 '이름' 칸만 치환
-    try {
-      const lines = (currentTableText || "").split(/\r?\n/);
-      if (lines.length > nameEditIdx + 1) {
-        const targetLine = lines[nameEditIdx + 1]; // 0번째는 헤더
-        const cols = targetLine.split("\t");
-        if (cols.length >= 2) {
-          cols[1] = newName;
-          lines[nameEditIdx + 1] = cols.join("\t");
-          const nextTsv = lines.join("\n");
-          setTablesByDepot?.((prev) => ({
-            ...(prev || {}),
-            [selectedDepot]: nextTsv,
-          }));
-        }
+    if (editField === "name") {
+      const oldName = oldRow?.name || "";
+      if (!newVal || newVal === oldName) {
+        cancelEdit();
+        return;
       }
-    } catch (err) {
-      console.warn("[TSV 이름 수정]", err);
+
+      const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
+      if (commonMap?.[key]?.names?.length) {
+        const newNames = [...commonMap[key].names];
+        newNames[editingIdx] = newVal;
+        const nextMap = {
+          ...commonMap,
+          [key]: { ...commonMap[key], names: newNames },
+        };
+        setCommonMap?.(nextMap);
+        try {
+          await saveCommonDataToDB(nextMap);
+        } catch {}
+      }
+
+      // TSV 텍스트 동기화
+      try {
+        const lines = (currentTableText || "").split(/\r?\n/);
+        if (lines.length > editingIdx + 1) {
+          const cols = lines[editingIdx + 1].split("\t");
+          if (cols.length >= 2) {
+            cols[1] = newVal;
+            lines[editingIdx + 1] = cols.join("\t");
+            setTablesByDepot?.((prev) => ({
+              ...(prev || {}),
+              [selectedDepot]: lines.join("\n"),
+            }));
+          }
+        }
+      } catch {}
+
+      if (myName === oldName) setMyNameForDepot?.(selectedDepot, newVal);
     }
 
-    // 3) 내 이름이 이 사람이면 같이 바꿔주기
-    if (myName === oldName) setMyNameForDepot?.(selectedDepot, newName);
+    if (editField === "phone") {
+      const oldPhone = oldRow?.phone || "";
+      if (newVal === oldPhone) {
+        cancelEdit();
+        return;
+      }
 
-    setNameEditIdx(-1);
-    setNameEditValue("");
-  };
+      const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
+      if (commonMap?.[key]) {
+        const len = commonMap[key].names?.length || 0;
+        const newPhones = Array.isArray(commonMap[key].phones)
+          ? [...commonMap[key].phones]
+          : new Array(len).fill("");
+        while (newPhones.length < len) newPhones.push("");
+        newPhones[editingIdx] = newVal;
+        const nextMap = {
+          ...commonMap,
+          [key]: { ...commonMap[key], phones: newPhones },
+        };
+        setCommonMap?.(nextMap);
+        try {
+          await saveCommonDataToDB(nextMap);
+        } catch {}
+      }
+    }
 
-  const cancelEditName = () => {
-    setNameEditIdx(-1);
-    setNameEditValue("");
+    cancelEdit();
   };
 
   // ─────────────────────────────────────────
@@ -361,23 +388,22 @@ export default function SettingsView(props) {
               ))}
             </select>
 
-            {/* ─── 이름 편집 (마스터 토글 방식) ─── */}
+            {/* ─── 인원 편집 (이름+전화번호, 교번/시간 함께 표시) ─── */}
             <div className="mt-5 p-4 rounded-2xl bg-gray-900/60 border border-gray-700/40">
               <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                 <label className="text-sm font-semibold text-gray-200 flex items-center gap-1">
                   <Edit3 className="w-3.5 h-3.5" />
-                  이름 편집 ({selectedDepot})
+                  인원 편집 ({selectedDepot})
                 </label>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-gray-400">
-                    {nameList?.length || 0}명
+                    {peopleRows?.length || 0}명
                   </span>
                   {/* 마스터 토글 */}
                   <button
                     onClick={() => {
                       setEditModeOn((v) => !v);
-                      setNameEditIdx(-1);
-                      setNameEditValue("");
+                      cancelEdit();
                     }}
                     className={
                       "px-3 py-1 rounded-lg text-[11px] font-semibold transition " +
@@ -393,84 +419,140 @@ export default function SettingsView(props) {
               <p className="text-[11px] text-gray-400 mb-2 leading-relaxed">
                 {editModeOn ? (
                   <span className="text-amber-300">
-                    🔧 수정 모드 — 이름을 눌러 변경하세요. 변경한 이름은
-                    <b> 다음날에도 그대로 유지</b>됩니다 (영구 개명).
+                    🔧 수정 모드 — 이름/전화번호를 눌러 변경하세요. 변경사항은
+                    <b> 다음날에도 그대로 유지</b>됩니다.
                   </span>
                 ) : (
-                  <>인사이동이나 오타 수정시 "수정 모드"를 켜고 변경하세요.</>
+                  <>인사이동·오타 수정·전화번호 추가 시 "수정 모드"를 켜세요.</>
                 )}
               </p>
 
-              <div className="max-h-[280px] overflow-y-auto pr-1 space-y-1">
-                {(nameList || []).map((n, i) => {
-                  const editing = editModeOn && nameEditIdx === i;
-                  const canEdit = editModeOn;
+              {/* 리스트 헤더 */}
+              {(peopleRows?.length || 0) > 0 && (
+                <div className="grid grid-cols-[28px_44px_1fr_120px] gap-2 px-1.5 pb-1 text-[10px] text-gray-500 border-b border-gray-700/50">
+                  <span className="text-right">#</span>
+                  <span>교번</span>
+                  <span>이름</span>
+                  <span>전화번호</span>
+                </div>
+              )}
+
+              <div className="max-h-[360px] overflow-y-auto pr-1 space-y-0.5 mt-1">
+                {(peopleRows || []).map((row, i) => {
+                  const editingName =
+                    editModeOn && editingIdx === i && editField === "name";
+                  const editingPhone =
+                    editModeOn && editingIdx === i && editField === "phone";
+                  const anyEditing = editingName || editingPhone;
+
+                  const diaLabel =
+                    row?.dia == null
+                      ? "-"
+                      : typeof row.dia === "number"
+                      ? String(row.dia)
+                      : String(row.dia);
+
+                  // 교번 색상
+                  let diaColor = "text-gray-300";
+                  if (typeof row?.dia === "number") {
+                    const nightStart = nightDiaByDepot?.[selectedDepot] ?? 25;
+                    diaColor =
+                      row.dia >= nightStart
+                        ? "text-sky-300"
+                        : "text-yellow-300";
+                  } else if (typeof row?.dia === "string") {
+                    const s = row.dia.replace(/\s/g, "");
+                    if (s.startsWith("휴") || s.includes("비"))
+                      diaColor = "text-gray-400";
+                    else if (s.startsWith("대")) diaColor = "text-purple-300";
+                  }
+
                   return (
                     <div
-                      key={`${n}-${i}`}
+                      key={`${row.name}-${i}`}
                       className={
-                        "flex items-center gap-2 p-1.5 rounded-lg transition " +
-                        (editing
+                        "grid grid-cols-[28px_44px_1fr_120px] gap-2 items-center p-2 rounded-md transition text-xs " +
+                        (anyEditing
                           ? "bg-amber-900/30 ring-1 ring-amber-500/50"
                           : editModeOn
-                          ? "bg-gray-800/60 hover:bg-gray-700/60 cursor-pointer"
+                          ? "bg-gray-800/60 hover:bg-gray-700/60"
                           : "bg-gray-800/60")
                       }
-                      onClick={() => {
-                        if (canEdit && !editing) beginEditName(i, n);
-                      }}
                     >
-                      <span className="text-[11px] text-gray-500 w-6 text-right shrink-0">
+                      <span className="text-[10px] text-gray-500 text-right">
                         {i + 1}
                       </span>
-                      {editing ? (
-                        <>
-                          <input
-                            autoFocus
-                            className="flex-1 bg-gray-700 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:ring-1 focus:ring-amber-400"
-                            value={nameEditValue}
-                            onChange={(e) => setNameEditValue(e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") commitEditName();
-                              if (e.key === "Escape") cancelEditName();
-                            }}
-                          />
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              commitEditName();
-                            }}
-                            className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-[11px] text-white"
-                          >
-                            저장
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              cancelEditName();
-                            }}
-                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-[11px] text-gray-300"
-                          >
-                            취소
-                          </button>
-                        </>
+                      <span className={`text-sm font-bold ${diaColor}`}>
+                        {diaLabel}
+                      </span>
+
+                      {/* 이름 칸 */}
+                      {editingName ? (
+                        <input
+                          autoFocus
+                          className="bg-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-100 outline-none focus:ring-1 focus:ring-amber-400"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitEdit();
+                            if (e.key === "Escape") cancelEdit();
+                          }}
+                          onBlur={() => commitEdit()}
+                        />
                       ) : (
-                        <>
-                          <span className="flex-1 text-xs text-gray-200 truncate">
-                            {n || <span className="text-gray-500">(빈칸)</span>}
-                          </span>
-                          {editModeOn && (
-                            <span className="px-2 py-0.5 rounded bg-gray-700/60 text-[10px] text-amber-300">
-                              탭하여 수정
-                            </span>
+                        <span
+                          className={
+                            "truncate text-gray-100 " +
+                            (editModeOn
+                              ? "cursor-pointer hover:text-amber-300"
+                              : "")
+                          }
+                          onClick={() => {
+                            if (editModeOn) beginEdit(i, "name", row.name);
+                          }}
+                        >
+                          {row.name || (
+                            <span className="text-gray-500">(빈칸)</span>
                           )}
-                        </>
+                        </span>
+                      )}
+
+                      {/* 전화번호 칸 */}
+                      {editingPhone ? (
+                        <input
+                          autoFocus
+                          type="tel"
+                          className="bg-gray-700 rounded px-1.5 py-0.5 text-[11px] text-gray-100 outline-none focus:ring-1 focus:ring-amber-400"
+                          placeholder="010-..."
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitEdit();
+                            if (e.key === "Escape") cancelEdit();
+                          }}
+                          onBlur={() => commitEdit()}
+                        />
+                      ) : (
+                        <span
+                          className={
+                            "truncate text-[11px] " +
+                            (row.phone ? "text-emerald-300" : "text-gray-500") +
+                            (editModeOn
+                              ? " cursor-pointer hover:text-amber-300"
+                              : "")
+                          }
+                          onClick={() => {
+                            if (editModeOn)
+                              beginEdit(i, "phone", row.phone || "");
+                          }}
+                        >
+                          {row.phone || (editModeOn ? "＋추가" : "—")}
+                        </span>
                       )}
                     </div>
                   );
                 })}
-                {(nameList?.length || 0) === 0 && (
+                {(peopleRows?.length || 0) === 0 && (
                   <div className="text-xs text-gray-500 py-4 text-center">
                     먼저 ZIP 또는 TSV를 등록하세요.
                   </div>

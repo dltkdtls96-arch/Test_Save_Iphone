@@ -719,7 +719,7 @@ export default function App() {
           seq: String(i + 1),
           name,
           dia,
-          phone: "",
+          phone: common.phones?.[i] || "", // commonMap에 저장된 전화번호 우선
           weekday: splitWT(nor),
           saturday: splitWT(sat),
           holiday: splitWT(hol),
@@ -1099,12 +1099,15 @@ export default function App() {
         // 즉 names_new[j] = names[i]  where  mod(i + dd, len) = j
         //                 = names[mod(j - dd, len)]
         const newNames = new Array(len);
+        const newPhones = new Array(len);
+        const oldPhones = data.phones || [];
         for (let j = 0; j < len; j++) {
           const oldI = (((j - dd) % len) + len) % len;
           newNames[j] = data.names[oldI];
+          newPhones[j] = oldPhones[oldI] || "";
         }
 
-        nextMap[key] = { ...data, names: newNames };
+        nextMap[key] = { ...data, names: newNames, phones: newPhones };
         changed = true;
       }
 
@@ -1223,13 +1226,17 @@ export default function App() {
         const len = zipData.names.length;
         if (dd !== 0 && len > 0) {
           const newNames = new Array(len);
+          const newPhones = new Array(len);
+          const oldPhones = zipData.phones || [];
           for (let j = 0; j < len; j++) {
             const oldI = (((j - dd) % len) + len) % len;
             newNames[j] = zipData.names[oldI];
+            newPhones[j] = oldPhones[oldI] || "";
           }
           finalMap[key] = {
             ...zipData,
             names: newNames,
+            phones: newPhones,
             baseDate: todayISO,
           };
         } else {
@@ -3095,6 +3102,7 @@ export default function App() {
                 onOpenSetupWizard: () => setShowSetupWizard(true),
                 commonMap,
                 setCommonMap,
+                peopleRows,
               }}
             />
           </React.Suspense>
