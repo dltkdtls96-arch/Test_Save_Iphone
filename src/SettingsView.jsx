@@ -1,47 +1,36 @@
 // src/SettingsView.jsx
 import React from "react";
 import { Settings as SettingsIcon, Upload } from "lucide-react";
-import PasswordSettings from "./lock/PasswordSettings"; // 🔒 비밀번호 설정 UI
+import PasswordSettings from "./lock/PasswordSettings";
 
 export default function SettingsView(props) {
   const {
-    // App.jsx에서 전달되는 값들
     selectedDepot,
     setSelectedDepot,
-
     myName,
     setMyNameForDepot,
-
     nameList,
-
     anchorDateStr,
     setAnchorDateStr,
-
     holidaysText,
     setHolidaysText,
     newHolidayDate,
     setNewHolidayDate,
-
     nightDiaByDepot,
     setNightDiaForDepot,
-
     highlightMap,
     setHighlightMap,
-
     currentTableText,
     setTablesByDepot,
-
-    // 향후 확장용으로 유지
     selectedDate,
     setSelectedDate,
-
     DEPOTS,
     DEFAULT_HOLIDAYS_25_26,
-
     onUpload,
-    buildGyodaeTable, // ← 추가
+    buildGyodaeTable,
     theme,
     setTheme,
+    onOpenSetupWizard, // ← 추가
   } = props;
 
   const palette = [
@@ -55,25 +44,10 @@ export default function SettingsView(props) {
     "#ec4899",
     "#94a3b8",
   ];
-  // 자동 기본값 설정
+
   React.useEffect(() => {
     if (!selectedDepot) return;
 
-    // 기준일 자동 설정
-    const defaultAnchorByDepot = {
-      문양: "2026-01-21",
-      월배: "2026-03-01",
-      안심: "2025-10-01",
-      교대: "2025-09-29",
-      경산: "2025-12-28",
-    };
-
-    const defaultAnchor = defaultAnchorByDepot[selectedDepot];
-    if (defaultAnchor && anchorDateStr !== defaultAnchor) {
-      setAnchorDateStr(defaultAnchor);
-    }
-
-    // 야간 규칙 자동 설정
     const defaultNightDiaByDepot = {
       안심: 25,
       월배: 25,
@@ -81,16 +55,11 @@ export default function SettingsView(props) {
       경산: 21,
       교대: 21,
     };
-
     const defaultNightDia = defaultNightDiaByDepot[selectedDepot];
-    if (
-      defaultNightDia &&
-      nightDiaByDepot?.[selectedDepot] !== defaultNightDia
-    ) {
+    if (defaultNightDia && nightDiaByDepot?.[selectedDepot] !== defaultNightDia)
       setNightDiaForDepot(selectedDepot, defaultNightDia);
-    }
   }, [selectedDepot]);
-  // 공휴일 입력 텍스트 정규화(중복 제거 + 정렬)
+
   const normalizeHolidays = (text) => {
     const set = new Set(
       (text || "")
@@ -125,11 +94,23 @@ export default function SettingsView(props) {
       </div>
 
       <div className="px-4 py-3 space-y-4">
+        {/* ✅ ZIP / TSV 등록 버튼 */}
+        <section>
+          <button
+            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold text-white transition"
+            onClick={() => onOpenSetupWizard?.()}
+          >
+            📦 데이터 등록 방식 변경 (ZIP / TSV)
+          </button>
+          <p className="text-xs text-gray-400 mt-1">
+            ZIP 파일 등록, 행로표 이미지 교체, 소속·교번 재설정
+          </p>
+        </section>
+
         {/* 2-컬럼 레이아웃 */}
         <section className="grid md:grid-cols-2 gap-4 overflow-x-hidden">
           {/* 왼쪽 컬럼 */}
           <div>
-            {/* 소속 */}
             <label className="block text-sm text-gray-300 mb-1">소속</label>
             <select
               className="w-full bg-gray-700 rounded-xl p-2 text-sm"
@@ -143,7 +124,6 @@ export default function SettingsView(props) {
               ))}
             </select>
 
-            {/* 내 이름(소속별) */}
             <label className="block text-sm text-gray-300 mb-1 mt-4">
               내 이름
             </label>
@@ -168,34 +148,12 @@ export default function SettingsView(props) {
                     {anchorDateStr ? `현재: ${anchorDateStr}` : "(미설정)"}
                   </span>
                 </label>
-
-                {/* ✅ 안심 선택 시 안내 문구 */}
-                {selectedDepot === "안심" && (
-                  <span className="text-xs text-amber-300">
-                    {/* 안심은 10월 1일로 하세요*/}
-                  </span>
-                )}
-
-                {/* ✅ 교대 선택 시 안내 문구 */}
                 {selectedDepot === "교대" && (
                   <span className="text-xs text-amber-300">
                     교대는 9월 29일로 하세요
                   </span>
                 )}
               </div>
-
-              {selectedDepot === "문양" && (
-                <span className="text-xs text-amber-300">
-                  {/*문양은 1월 21일로 하세요*/}
-                </span>
-              )}
-
-              {selectedDepot === "월배" && (
-                <span className="text-xs text-amber-300">
-                  {/*월배은 11월 1일로 하세요*/}
-                </span>
-              )}
-
               <div className="relative rounded-xl overflow-hidden bg-gray-700 focus-within:ring-2 focus-within:ring-cyan-500">
                 <input
                   type="date"
@@ -204,7 +162,6 @@ export default function SettingsView(props) {
                   onChange={(e) => setAnchorDateStr(e.target.value)}
                 />
               </div>
-
               <p className="text-xs text-gray-400 mt-3 leading-relaxed">
                 기준일을 바꾸면 회전 기준이 변경됩니다.
                 <br />
@@ -224,20 +181,17 @@ export default function SettingsView(props) {
                   <button
                     onClick={() => setHolidaysText("")}
                     className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-xs text-gray-100"
-                    title="입력한 공휴일을 전부 지웁니다 (일요일 자동 휴일은 유지됨)"
                   >
                     휴일 완전 초기화
                   </button>
                   <button
                     onClick={() => setHolidaysText(DEFAULT_HOLIDAYS_25_26)}
                     className="px-2 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-xs text-white"
-                    title="2025·2026 기본 공휴일 리스트로 복구"
                   >
                     기본 살리기
                   </button>
                 </div>
               </div>
-
               <div className="flex items-center gap-2 mb-3">
                 <input
                   type="date"
@@ -259,7 +213,6 @@ export default function SettingsView(props) {
                   추가
                 </button>
               </div>
-
               <textarea
                 className="w-full bg-gray-800 rounded-xl p-2 h-28 text-sm text-gray-100 font-mono leading-5 whitespace-pre resize-none"
                 placeholder={"2025-01-01\n2025-02-10\n2025-03-01"}
@@ -269,18 +222,19 @@ export default function SettingsView(props) {
                   setHolidaysText(normalizeHolidays(e.target.value))
                 }
               />
-
               <div className="text-xs text-gray-400 mt-2 leading-relaxed">
-                • 날짜를 직접 입력하거나, 선택 후 ‘추가’를 누르면 자동으로
+                • 날짜를 직접 입력하거나, 선택 후 '추가'를 누르면 자동으로
                 목록에 들어갑니다.
-                <br />• 쉼표(,) 또는 줄바꿈으로 여러 날짜를 구분할 수 있습니다.
-                <br />• 일요일은 자동으로 ‘휴일’로 처리됩니다.
+                <br />
+                • 쉼표(,) 또는 줄바꿈으로 여러 날짜를 구분할 수 있습니다.
+                <br />• 일요일은 자동으로 '휴일'로 처리됩니다.
               </div>
             </div>
           </div>
+
           {/* 오른쪽 컬럼 */}
           <div className="space-y-3">
-            {/* ✅ 테마 설정 */}
+            {/* 테마 설정 */}
             <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
               <div className="font-semibold mb-2">화면 테마</div>
               <div className="flex gap-2">
@@ -313,7 +267,8 @@ export default function SettingsView(props) {
                 이 앱만 따로 라이트/다크를 정해서 쓸 수 있어요.
               </p>
             </div>
-            {/* 야간 규칙 (소속별) */}
+
+            {/* 야간 규칙 */}
             <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
               <div className="font-semibold mb-1">
                 야간 규칙 ({selectedDepot || "소속 미선택"})
@@ -332,18 +287,14 @@ export default function SettingsView(props) {
                     )
                   }
                 />
-                <br />
                 <span>( 안심/월배=25, 문양=24, 경산=21 )</span>
               </div>
-
               <button
                 className="mt-2 px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs"
                 onClick={applyNightRuleToAll}
-                title="현재 소속의 값을 모든 소속에 복사"
               >
                 현재 값 모든 소속에 적용
               </button>
-
               <div className="text-xs text-gray-300 mt-1">
                 * (중요!) 반드시 설정 상단의 소속을 선택하고 오세요
               </div>
@@ -352,14 +303,13 @@ export default function SettingsView(props) {
             {/* 특정 사람 강조 색상 */}
             <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
               <div className="font-semibold mb-2">특정 사람 강조 색상</div>
-
               <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
                 {(nameList || []).map((n) => {
                   const current = highlightMap?.[n];
                   return (
                     <div
                       key={n}
-                      className="p-2.5 rounded-xl bg-gray-800/60 border border-gray-700/40 transition-all hover:bg-gray-700/80 hover:shadow-md hover:shadow-black/30"
+                      className="p-2.5 rounded-xl bg-gray-800/60 border border-gray-700/40 transition-all hover:bg-gray-700/80"
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
@@ -371,7 +321,6 @@ export default function SettingsView(props) {
                               <span
                                 className="inline-block w-3 h-3 rounded-full ring-1 ring-gray-500"
                                 style={{ backgroundColor: current }}
-                                title={current}
                               />
                               <span className="text-[11px] text-gray-400">
                                 {current}
@@ -388,12 +337,10 @@ export default function SettingsView(props) {
                             })
                           }
                           className="px-2 h-6 rounded text-[11px] bg-gray-700 hover:bg-gray-600 transition-colors"
-                          title="해제"
                         >
                           해제
                         </button>
                       </div>
-
                       <div className="flex flex-wrap gap-1.5">
                         {palette.map((c) => (
                           <button
@@ -412,7 +359,6 @@ export default function SettingsView(props) {
                             }
                             style={{ backgroundColor: c }}
                             title={c}
-                            aria-label={`${n} 강조 색상 ${c}로 설정`}
                           />
                         ))}
                       </div>
@@ -420,9 +366,8 @@ export default function SettingsView(props) {
                   );
                 })}
               </div>
-
               <div className="text-xs text-gray-400 mt-2">
-                * 색상을 탭하면 적용됩니다. ‘해제’로 원복.
+                * 색상을 탭하면 적용됩니다. '해제'로 원복.
               </div>
             </div>
           </div>
@@ -445,18 +390,17 @@ export default function SettingsView(props) {
               />
             </label>
           </div>
+
           {selectedDepot === "교대" && buildGyodaeTable && (
             <div className="mb-2">
               <button
                 className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white"
-                onClick={() => {
+                onClick={() =>
                   setTablesByDepot((prev) => ({
                     ...(prev || {}),
                     [selectedDepot]: buildGyodaeTable(),
-                  }));
-                  // 필요하면 기준일도 고정:
-                  // setAnchorDateStr("2025-10-01");
-                }}
+                  }))
+                }
               >
                 교대 21일 순환표로 채우기
               </button>
