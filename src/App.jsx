@@ -554,7 +554,7 @@ function useDaySwipeHandlers() {
 export default function App() {
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("theme");
-    return saved === "dark" || saved === "light" ? saved : "light";
+    return saved === "dark" || saved === "light" ? saved : "dark";
   });
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
