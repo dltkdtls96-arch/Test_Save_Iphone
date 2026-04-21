@@ -1337,8 +1337,13 @@ export default function App() {
   // ── commonMap 없으면 SetupWizard 자동 표시 ──
   useEffect(() => {
     if (!loaded) return;
-    if (!commonMap) setShowSetupWizard(true);
-  }, [loaded]); // 최초 1회만 체크
+
+    const done = localStorage.getItem("setupDone");
+
+    if (!commonMap && !done) {
+      setShowSetupWizard(true);
+    }
+  }, [loaded]);
 
   // ── tablesByDepot / anchorDateByDepot 바뀔 때 commonMap 동기화 ──
   useEffect(() => {
@@ -1568,6 +1573,7 @@ export default function App() {
     // anchor = today (Wizard가 이미 오늘 배치로 넘겼으므로)
     setAnchorDateByDepot((prev) => ({ ...prev, [depot]: todayISO }));
     setShowSetupWizard(false);
+    localStorage.setItem("setupDone", "true");
   }
 
   // ── 탭 변경 ──
