@@ -1176,15 +1176,20 @@ export default function App() {
   }, [loaded, commonMap, fmt(today)]);
 
   // ── SetupWizard 완료 ──
+  //
+  //  핵심: anchor=today 가 되도록 names 배열을 미리 재배치해서 넘김.
+  //  → "매일 자동 갱신" useEffect가 중복 회전하지 않음 (이미 오늘이라서 skip)
   async function handleSetupComplete(result) {
     const {
       mode,
       depot,
       myName: wizName,
       myCode,
-      anchorDate: wizAnchor,
+      anchorDate: wizAnchor, // Wizard가 계산한 과거 anchor
       commonMap: newMap,
     } = result;
+
+    const todayISO = fmt(today);
 
     let finalMap = { ...(commonMap || {}) };
     if (mode === "zip") {
@@ -1195,26 +1200,56 @@ export default function App() {
           finalMap[key] = loadPathsIntoCommon(finalMap[key], newMap._pathsOnly);
     }
 
-    // ✅ ZIP이든 TSV든 anchorDate를 먼저 반영해서 commonMap 재생성
+    // ─── 여기가 핵심 수정 ───
+    // Wizard는 "anchor = today - (codeIdx - nameIdx)" 식으로 과거 anchor를 계산해줌.
+    // 우리는 대신 "anchor = today + names 배열 재배치"로 변환한다.
+    //
+    // 재배치 공식:
+    //   names_new[j] = names_old[i]  where  mod(i + dd, len) = j
+    //   = names_old[mod(j - dd, len)]
+    //   dd = today - wizAnchor
+    //
     if (mode === "zip") {
-      // ZIP commonMap의 baseDate를 wizAnchor로 업데이트
       const key = DEPOT_TO_ZIP_KEY[depot] || depot;
-      if (finalMap[key]) {
-        finalMap[key] = { ...finalMap[key], baseDate: wizAnchor };
+      const zipData = finalMap[key];
+      if (
+        zipData?.names?.length &&
+        zipData?.gyobun?.length &&
+        wizAnchor &&
+        wizAnchor !== todayISO
+      ) {
+        const anchorD = stripTime(new Date(wizAnchor));
+        const dd = diffDays(today, anchorD);
+        const len = zipData.names.length;
+        if (dd !== 0 && len > 0) {
+          const newNames = new Array(len);
+          for (let j = 0; j < len; j++) {
+            const oldI = (((j - dd) % len) + len) % len;
+            newNames[j] = zipData.names[oldI];
+          }
+          finalMap[key] = {
+            ...zipData,
+            names: newNames,
+            baseDate: todayISO,
+          };
+        } else {
+          finalMap[key] = { ...zipData, baseDate: todayISO };
+        }
+      } else if (zipData) {
+        finalMap[key] = { ...zipData, baseDate: todayISO };
       }
     }
 
-    // ✅ ZIP 모드: tablesByDepot에도 TSV 형식으로 채워서 동기화 useEffect가 올바르게 작동하도록
+    // ZIP 모드: tablesByDepot에도 재배치된 이름으로 TSV 생성
     if (mode === "zip") {
       const key = DEPOT_TO_ZIP_KEY[depot] || depot;
       const zipData = finalMap[key];
       if (zipData?.names?.length && zipData?.gyobun?.length) {
-        // gyobun → worktime 역변환해서 TSV 텍스트 생성
         const header =
           "순번\t이름\tdia\t평일출근\t평일퇴근\t토요일출근\t토요일퇴근\t휴일출근\t휴일퇴근";
         const rows = zipData.names.map((name, i) => {
           const code = zipData.gyobun[i] || "";
-          const dia = code.replace(/d$/i, ""); // "37d" → "37"
+          const dia = code.replace(/d$/i, "");
           const nor = zipData.worktime?.nor?.[code.toLowerCase()] || "----";
           const sat = zipData.worktime?.sat?.[code.toLowerCase()] || "----";
           const hol = zipData.worktime?.hol?.[code.toLowerCase()] || "----";
@@ -1242,7 +1277,8 @@ export default function App() {
     saveCommonDataToDB(finalMap).catch(() => {});
     setSelectedDepot(depot);
     if (wizName) setMyNameForDepot(depot, wizName);
-    setAnchorDateByDepot((prev) => ({ ...prev, [depot]: wizAnchor }));
+    // ⚠️ 과거 날짜(wizAnchor)가 아니라 오늘 날짜로 세팅
+    setAnchorDateByDepot((prev) => ({ ...prev, [depot]: todayISO }));
     setShowSetupWizard(false);
   }
 
