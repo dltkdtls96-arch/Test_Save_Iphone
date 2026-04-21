@@ -1071,7 +1071,7 @@ export default function App() {
       }
       return next;
     });
-  }, [loaded]);  // 최초 1회만 체크
+  }, [loaded, commonMap, myNameMap]);
 
   // ── SetupWizard 완료 ──
   async function handleSetupComplete(result) {
