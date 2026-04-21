@@ -43,8 +43,6 @@ export default function PersonEditModal({
     }
   }, [open, oldName, oldCode, hasTodayCode, hasTodayName]);
 
-  if (!open) return null;
-
   // 입력 정규화: 앞뒤 공백 제거 + 중간 다중 공백 축약
   const q = nameQuery.replace(/\s+/g, " ").trim();
   const lowerQ = q.toLowerCase();
@@ -103,6 +101,9 @@ export default function PersonEditModal({
       ) || ""
     );
   }, [isExistingOther, hasAmbiguousMatch, nameList, qKey, oldKey]);
+
+  // ⚠️ early return 은 반드시 모든 hook 호출 이후에!
+  if (!open) return null;
 
   // 입력값이 본인 이름과 "실질적으로 동일" 하면 변경 아님
   const nameChanged = q.length > 0 && qKey !== oldKey;

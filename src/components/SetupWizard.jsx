@@ -189,21 +189,60 @@ export default function SetupWizard({
       const len = data.names.length;
       const isNewName = myName && !data.names.includes(myName);
 
-      // 🔑 오늘 정답 배치를 직접 계산:
-      // 목표: names_today[i] = "오늘 교번 gyobun[i]를 받는 사람"
-      // dataEngine 공식: names_orig[k]의 오늘 교번 = gyobun[(k + today-baseDate) mod len]
-      // 역으로, 오늘 gyobun[i]를 받는 사람 = names_orig[mod(i - (today-baseDate), len)]
+      // 🔑 info.txt 기반 올바른 공식:
+      //   names_orig[k]의 date 교번 = gyobun[(k - baseNameIdx + baseCodeIdx + (date - baseDate)) mod len]
+      //
+      // 목표: namesToday[i] = "오늘 gyobun[i]를 받는 사람"
+      // 해: k = mod(i + baseNameIdx - baseCodeIdx - offset, len)
+      const baseNameIdx = data.names.findIndex(
+        (n) =>
+          (n || "").replace(/\s/g, "") ===
+          (data.baseName || "").replace(/\s/g, "")
+      );
+      const baseCodeIdx = data.gyobun.findIndex(
+        (c) =>
+          (c || "").trim().toLowerCase() ===
+          (data.baseCode || "").trim().toLowerCase()
+      );
       const offset = diffDays(data.baseDate, today); // today - baseDate
+
+      // baseName/baseCode를 찾지 못하면 info.txt 무시하고 단순 공식 (fallback)
+      const shift =
+        baseNameIdx >= 0 && baseCodeIdx >= 0
+          ? baseNameIdx - baseCodeIdx - offset
+          : -offset;
+
+      console.log(
+        "[Wizard] baseDate=",
+        data.baseDate,
+        "today=",
+        today,
+        "offset=",
+        offset,
+        "baseName=",
+        data.baseName,
+        "baseNameIdx=",
+        baseNameIdx,
+        "baseCode=",
+        data.baseCode,
+        "baseCodeIdx=",
+        baseCodeIdx,
+        "shift=",
+        shift,
+        "len=",
+        len
+      );
+
       const namesToday = new Array(len);
       const phonesToday = new Array(len);
       const oldPhones = data.phones || [];
       for (let i = 0; i < len; i++) {
-        const origIdx = (((i - offset) % len) + len) % len;
+        const origIdx = (((i + shift) % len) + len) % len;
         namesToday[i] = data.names[origIdx];
         phonesToday[i] = oldPhones[origIdx] || "";
       }
 
-      // 새 이름 주입: myCode 자리에 myName
+      // 새 이름 주입: myCode 자리에 myName (덮어쓰기)
       if (isNewName) {
         const codeIdx = data.gyobun.findIndex(
           (c) => c.trim().toLowerCase() === myCode.trim().toLowerCase()
@@ -214,12 +253,30 @@ export default function SetupWizard({
         }
       }
 
-      // baseDate = today 로 업데이트 (anchor=today 와 일치)
+      console.log(
+        "[Wizard] 샘플 (gyobun=namesToday):",
+        data.gyobun.slice(0, 12).map((c, i) => `${c}=${namesToday[i]}`)
+      );
+
+      // baseDate = today, baseName = namesToday[baseCodeIdx] 로 업데이트
+      // 이제 anchor=today, (k + 0) = k 공식에 맞도록
+      // baseCodeIdx 자리에 있는 이름 = 오늘 baseCode 를 받는 사람
+      const newBaseName =
+        baseCodeIdx >= 0 && baseCodeIdx < len
+          ? namesToday[baseCodeIdx]
+          : namesToday[0];
+      const newBaseCode =
+        baseCodeIdx >= 0 && baseCodeIdx < len
+          ? data.gyobun[baseCodeIdx]
+          : data.gyobun[0];
+
       const updatedData = {
         ...data,
         names: namesToday,
         phones: phonesToday,
         baseDate: today,
+        baseName: newBaseName,
+        baseCode: newBaseCode,
       };
       effectiveCommonMap = { ...commonMap, [key]: updatedData };
     }
@@ -234,7 +291,7 @@ export default function SetupWizard({
       depot,
       myName,
       myCode,
-      anchorDate: today, // 이미 오늘 정답 배치이므로 anchor=today
+      anchorDate: today,
       commonMap: finalCommonMap,
     });
   }

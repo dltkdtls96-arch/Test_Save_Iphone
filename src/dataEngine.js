@@ -406,13 +406,38 @@ export function getCodeForDate(common, name, dateStr, overrides = {}) {
   const overrideKey = `${common.depot}::${name}::${dateStr}`;
   if (overrides[overrideKey]) return overrides[overrideKey];
 
-  const nameIdx = common.names.findIndex(
-    (n) => n.replace(/\s/g, "") === name.replace(/\s/g, "")
-  );
+  const norm = (s) => String(s || "").replace(/\s+/g, "");
+  const nameIdx = common.names.findIndex((n) => norm(n) === norm(name));
   if (nameIdx < 0 || !common.gyobun.length) return "";
 
-  const offset = diffDays(common.baseDate, dateStr);
-  const codeIdx = positiveMod(nameIdx + offset, common.gyobun.length);
+  const len = common.gyobun.length;
+  const offset = diffDays(common.baseDate, dateStr); // date - baseDate
+
+  // 🔑 info.txt 기반 공식:
+  //   names[k]의 date 교번 = gyobun[(k - baseNameIdx + baseCodeIdx + offset) mod len]
+  // baseName/baseCode가 없거나 못 찾으면 fallback: (nameIdx + offset) (legacy)
+  const baseNameIdx = common.baseName
+    ? common.names.findIndex((n) => norm(n) === norm(common.baseName))
+    : -1;
+  const baseCodeIdx = common.baseCode
+    ? common.gyobun.findIndex(
+        (c) =>
+          String(c || "")
+            .trim()
+            .toLowerCase() ===
+          String(common.baseCode || "")
+            .trim()
+            .toLowerCase()
+      )
+    : -1;
+
+  let codeIdx;
+  if (baseNameIdx >= 0 && baseCodeIdx >= 0) {
+    codeIdx = positiveMod(nameIdx - baseNameIdx + baseCodeIdx + offset, len);
+  } else {
+    // fallback (이전 동작)
+    codeIdx = positiveMod(nameIdx + offset, len);
+  }
   return common.gyobun[codeIdx] || "";
 }
 
@@ -436,7 +461,21 @@ export function getPathImageURL(common, code, dateStr, holidaySet = new Set()) {
   const empty = { url: null, loading: false, promise: null };
   if (!code || !common?.paths) return empty;
 
+  // 휴N, 비번, ---- 등 쉬는 코드는 행로 없음
+  const sNorm = normalizeCode(code);
+  if (
+    !sNorm ||
+    sNorm === "----" ||
+    sNorm.startsWith("휴") ||
+    sNorm.startsWith("대") ||
+    sNorm.includes("비번") ||
+    sNorm === "비"
+  ) {
+    return empty;
+  }
+
   const folder = _getPathFolder(common, code, dateStr, holidaySet);
+  if (!folder) return empty;
   const num = String(code).replace(/[^0-9]/g, "");
   if (!num) return empty;
 

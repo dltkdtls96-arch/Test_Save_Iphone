@@ -143,6 +143,8 @@ export function RouteImageView({
   holidaySet,
   busImageSrc,
   showBusDefault = true,
+  scale = 1, // 이미지 배율 (기지별, 1~2)
+  onScaleChange, // (newScale) => void — 있으면 +/- 버튼 표시
 }) {
   const [altView, setAltView] = useState(false);
   const [asyncUrl, setAsyncUrl] = useState(null);
@@ -248,11 +250,56 @@ export function RouteImageView({
         <img
           src={displaySrc}
           alt={showBus ? "버스시간표" : `행로표-${code}`}
-          className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-opacity duration-300"
+          className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none transition-all duration-300"
+          style={{
+            transform: `scale(${scale})`,
+            transformOrigin: "center center",
+          }}
         />
 
-        <div className="absolute top-2 right-2 px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
-          {showBus ? "셔틀 시간표" : "행로표"}
+        <div className="absolute top-2 right-2 flex items-center gap-1">
+          {onScaleChange && !showBus && (
+            <div className="flex items-center gap-0.5 rounded-lg bg-gray-900/80 text-white overflow-hidden">
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const next = Math.max(
+                    1,
+                    Math.round((scale - 0.1) * 100) / 100
+                  );
+                  onScaleChange(next);
+                }}
+                disabled={scale <= 1}
+                className="w-6 h-6 flex items-center justify-center text-sm font-bold disabled:opacity-40"
+              >
+                −
+              </button>
+              <span className="text-[10px] font-semibold min-w-[32px] text-center">
+                {scale.toFixed(1)}x
+              </span>
+              <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const next = Math.min(
+                    2,
+                    Math.round((scale + 0.1) * 100) / 100
+                  );
+                  onScaleChange(next);
+                }}
+                disabled={scale >= 2}
+                className="w-6 h-6 flex items-center justify-center text-sm font-bold disabled:opacity-40"
+              >
+                +
+              </button>
+            </div>
+          )}
+          <div className="px-2 py-1 rounded-lg text-[10px] font-semibold bg-gray-900/80 text-white">
+            {showBus ? "셔틀 시간표" : "행로표"}
+          </div>
         </div>
 
         {!noRoute && (

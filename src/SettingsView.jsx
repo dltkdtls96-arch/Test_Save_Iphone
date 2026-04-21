@@ -31,6 +31,8 @@ export default function SettingsView(props) {
     setNewHolidayDate,
     nightDiaByDepot,
     setNightDiaForDepot,
+    routeScaleByDepot,
+    setRouteScaleForDepot,
     highlightMap,
     setHighlightMap,
     currentTableText,
@@ -731,6 +733,52 @@ export default function SettingsView(props) {
               >
                 현재 값 모든 소속에 적용
               </button>
+            </div>
+
+            {/* 행로표 이미지 배율 */}
+            <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
+              <div className="font-semibold mb-2">
+                행로표 배율 ({selectedDepot || "소속 미선택"})
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="range"
+                  min={1}
+                  max={2}
+                  step={0.1}
+                  value={routeScaleByDepot?.[selectedDepot] ?? 1}
+                  onChange={(e) =>
+                    setRouteScaleForDepot?.(
+                      selectedDepot,
+                      Math.min(2, Math.max(1, parseFloat(e.target.value) || 1))
+                    )
+                  }
+                  className="flex-1 min-w-[120px]"
+                />
+                <span className="font-semibold tabular-nums w-12 text-right">
+                  {(routeScaleByDepot?.[selectedDepot] ?? 1).toFixed(1)}x
+                </span>
+              </div>
+              <div className="flex gap-1 mt-2 flex-wrap">
+                {[1, 1.2, 1.5, 1.8, 2].map((v) => (
+                  <button
+                    key={v}
+                    className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs"
+                    onClick={() => setRouteScaleForDepot?.(selectedDepot, v)}
+                  >
+                    {v}x
+                  </button>
+                ))}
+                <button
+                  className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs ml-auto"
+                  onClick={() => {
+                    const val = routeScaleByDepot?.[selectedDepot] ?? 1;
+                    for (const d of DEPOTS) setRouteScaleForDepot?.(d, val);
+                  }}
+                >
+                  모든 소속에 적용
+                </button>
+              </div>
             </div>
 
             {/* 강조 색상 */}

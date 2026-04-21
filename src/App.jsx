@@ -1150,6 +1150,19 @@ export default function App() {
   const nightDiaThreshold = nightDiaByDepot[selectedDepot] ?? 25;
   const setNightDiaForDepot = (depot, val) =>
     setNightDiaByDepot((prev) => ({ ...prev, [depot]: val }));
+
+  // 기지별 행로표 이미지 배율 (0.5 ~ 2.0)
+  const [routeScaleByDepot, setRouteScaleByDepot] = useState({
+    안심: 1,
+    월배: 1,
+    경산: 1,
+    문양: 1,
+    교대: 1,
+    "교대(외)": 1,
+  });
+  const routeScale = routeScaleByDepot[selectedDepot] ?? 1;
+  const setRouteScaleForDepot = (depot, val) =>
+    setRouteScaleByDepot((prev) => ({ ...prev, [depot]: val }));
   const [highlightMap, setHighlightMap] = useState({});
   const [compareSelected, setCompareSelected] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -1245,6 +1258,7 @@ export default function App() {
             경산: s.nightDiaThreshold,
             문양: s.nightDiaThreshold,
           });
+        if (s.routeScaleByDepot) setRouteScaleByDepot(s.routeScaleByDepot);
         if (s.tablesByDepot && !isOldData) setTablesByDepot(s.tablesByDepot);
         if (s.myNameMap) setMyNameMap(s.myNameMap);
         if (s.selectedDepot) setSelectedDepot(s.selectedDepot);
@@ -1390,6 +1404,11 @@ export default function App() {
         const currentAnchor = anchorDateByDepot[depot];
         if (!currentAnchor) continue;
         if (currentAnchor === todayStr) continue;
+
+        // 🔑 Wizard가 이미 오늘 배치로 넘긴 경우 — baseDate가 오늘이면 skip
+        // (anchor는 사용자 localStorage 마이그레이션 등으로 오늘이 아닐 수 있지만
+        //  names 배열은 이미 오늘 정답 배치임)
+        if (data.baseDate === todayStr) continue;
 
         const anchorD = stripTime(new Date(currentAnchor));
         const dd = diffDays(today, anchorD); // today - anchorDate
@@ -1599,6 +1618,7 @@ export default function App() {
       anchorDateByDepot,
       holidaysText,
       nightDiaByDepot,
+      routeScaleByDepot,
       highlightMap,
       tablesByDepot,
       selectedDate: fmt(selectedDate),
@@ -1620,6 +1640,7 @@ export default function App() {
     anchorDateByDepot,
     holidaysText,
     nightDiaByDepot,
+    routeScaleByDepot,
     highlightMap,
     tablesByDepot,
     selectedDate,
@@ -3170,6 +3191,10 @@ export default function App() {
                     dateStr={fmt(selectedDate)}
                     holidaySet={holidaySet}
                     busImageSrc={defaultBusMap[selectedDepot]}
+                    scale={routeScale}
+                    onScaleChange={(v) =>
+                      setRouteScaleForDepot(selectedDepot, v)
+                    }
                   />
                 </div>
               </div>
@@ -3517,6 +3542,8 @@ export default function App() {
                 setNewHolidayDate,
                 nightDiaByDepot,
                 setNightDiaForDepot,
+                routeScaleByDepot,
+                setRouteScaleForDepot,
                 highlightMap,
                 setHighlightMap,
                 currentTableText,
