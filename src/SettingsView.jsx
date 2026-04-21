@@ -1,7 +1,20 @@
-// src/SettingsView.jsx
+// src/SettingsView.jsx  (v2)
 import React from "react";
-import { Settings as SettingsIcon, Upload } from "lucide-react";
+import {
+  Settings as SettingsIcon,
+  Upload,
+  Edit3,
+  Download,
+  Globe,
+} from "lucide-react";
 import PasswordSettings from "./lock/PasswordSettings";
+import {
+  loadZipToCommonMap,
+  saveCommonDataToDB,
+  saveZipBlobToDB,
+  fetchKoreanHolidaysRange,
+  DEPOT_TO_ZIP_KEY,
+} from "./dataEngine";
 
 export default function SettingsView(props) {
   const {
@@ -30,7 +43,10 @@ export default function SettingsView(props) {
     buildGyodaeTable,
     theme,
     setTheme,
-    onOpenSetupWizard, // ← 추가
+    onOpenSetupWizard,
+    // ─── 새 props ───
+    commonMap,
+    setCommonMap,
   } = props;
 
   const palette = [
@@ -45,9 +61,30 @@ export default function SettingsView(props) {
     "#94a3b8",
   ];
 
+  // ZIP 업로드 상태
+  const [zipLoading, setZipLoading] = React.useState(false);
+  const [zipProgress, setZipProgress] = React.useState({
+    loaded: 0,
+    total: 0,
+    phase: "",
+  });
+  const [zipError, setZipError] = React.useState("");
+  const [zipDoneMsg, setZipDoneMsg] = React.useState("");
+
+  // 이름 편집 상태
+  const [editModeOn, setEditModeOn] = React.useState(false);
+  const [nameEditIdx, setNameEditIdx] = React.useState(-1);
+  const [nameEditValue, setNameEditValue] = React.useState("");
+
+  // 공휴일 자동 로딩
+  const [holidayLoading, setHolidayLoading] = React.useState(false);
+  const [holidayMsg, setHolidayMsg] = React.useState("");
+
+  // TSV 등록 펼침
+  const [tsvOpen, setTsvOpen] = React.useState(false);
+
   React.useEffect(() => {
     if (!selectedDepot) return;
-
     const defaultNightDiaByDepot = {
       안심: 25,
       월배: 25,
@@ -75,6 +112,135 @@ export default function SettingsView(props) {
     for (const d of DEPOTS) setNightDiaForDepot(d, val);
   };
 
+  // ─────────────────────────────────────────
+  //  ZIP 직접 업로드 (Settings 안에서 바로)
+  // ─────────────────────────────────────────
+  async function handleZipUploadInSettings(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setZipLoading(true);
+    setZipError("");
+    setZipDoneMsg("");
+    setZipProgress({ loaded: 0, total: 0, phase: "opening" });
+    try {
+      const map = await loadZipToCommonMap(file, (p) => setZipProgress(p));
+      if (!Object.keys(map).length)
+        throw new Error("ZIP에 유효한 데이터가 없습니다.");
+      await saveZipBlobToDB(file, file.name);
+      const merged = { ...(commonMap || {}), ...map };
+      await saveCommonDataToDB(merged);
+      setCommonMap?.(merged);
+      setZipDoneMsg(
+        `✅ ${file.name} 등록 완료 (소속 ${Object.keys(map).length}개)`
+      );
+    } catch (err) {
+      setZipError(err.message || "ZIP 파일 오류");
+    } finally {
+      setZipLoading(false);
+      setZipProgress({ loaded: 0, total: 0, phase: "" });
+      e.target.value = "";
+    }
+  }
+
+  // ─────────────────────────────────────────
+  //  이름 편집
+  // ─────────────────────────────────────────
+  const beginEditName = (idx, currentName) => {
+    setNameEditIdx(idx);
+    setNameEditValue(currentName || "");
+  };
+
+  const commitEditName = async () => {
+    if (nameEditIdx < 0) return;
+    const newName = nameEditValue.trim();
+    const oldName = nameList?.[nameEditIdx] || "";
+    if (!newName || newName === oldName) {
+      setNameEditIdx(-1);
+      return;
+    }
+
+    // 1) commonMap[key].names 에 반영
+    const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
+    if (commonMap?.[key]?.names?.length) {
+      const newNames = [...commonMap[key].names];
+      newNames[nameEditIdx] = newName;
+      const nextMap = {
+        ...commonMap,
+        [key]: { ...commonMap[key], names: newNames },
+      };
+      setCommonMap?.(nextMap);
+      try {
+        await saveCommonDataToDB(nextMap);
+      } catch {}
+    }
+
+    // 2) TSV 텍스트에서도 해당 줄의 '이름' 칸만 치환
+    try {
+      const lines = (currentTableText || "").split(/\r?\n/);
+      if (lines.length > nameEditIdx + 1) {
+        const targetLine = lines[nameEditIdx + 1]; // 0번째는 헤더
+        const cols = targetLine.split("\t");
+        if (cols.length >= 2) {
+          cols[1] = newName;
+          lines[nameEditIdx + 1] = cols.join("\t");
+          const nextTsv = lines.join("\n");
+          setTablesByDepot?.((prev) => ({
+            ...(prev || {}),
+            [selectedDepot]: nextTsv,
+          }));
+        }
+      }
+    } catch (err) {
+      console.warn("[TSV 이름 수정]", err);
+    }
+
+    // 3) 내 이름이 이 사람이면 같이 바꿔주기
+    if (myName === oldName) setMyNameForDepot?.(selectedDepot, newName);
+
+    setNameEditIdx(-1);
+    setNameEditValue("");
+  };
+
+  const cancelEditName = () => {
+    setNameEditIdx(-1);
+    setNameEditValue("");
+  };
+
+  // ─────────────────────────────────────────
+  //  한국 공휴일 자동 등록
+  // ─────────────────────────────────────────
+  const autoLoadKoreanHolidays = async () => {
+    setHolidayLoading(true);
+    setHolidayMsg("");
+    try {
+      const thisYear = new Date().getFullYear();
+      const list = await fetchKoreanHolidaysRange(thisYear - 1, thisYear + 2);
+      const existing = new Set(
+        (holidaysText || "")
+          .split(/[\n,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+      );
+      list.forEach((d) => existing.add(d));
+      const merged = [...existing].sort().join("\n");
+      setHolidaysText(merged);
+      setHolidayMsg(
+        `✅ ${list.length}개 공휴일 병합 완료 (${thisYear - 1} ~ ${
+          thisYear + 2
+        })`
+      );
+    } catch (err) {
+      setHolidayMsg(`⚠️ 가져오기 실패 — ${err.message || "오프라인?"}`);
+    } finally {
+      setHolidayLoading(false);
+    }
+  };
+
+  const progressPct =
+    zipProgress.total > 0
+      ? Math.round((zipProgress.loaded / zipProgress.total) * 100)
+      : 0;
+
   return (
     <div
       className="bg-gray-800 shadow mt-4 overflow-y-auto"
@@ -94,17 +260,73 @@ export default function SettingsView(props) {
       </div>
 
       <div className="px-4 py-3 space-y-4">
-        {/* ✅ ZIP / TSV 등록 버튼 */}
-        <section>
-          <button
-            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold text-white transition"
-            onClick={() => onOpenSetupWizard?.()}
-          >
-            📦 데이터 등록 방식 변경 (ZIP / TSV)
-          </button>
-          <p className="text-xs text-gray-400 mt-1">
-            ZIP 파일 등록, 행로표 이미지 교체, 소속·교번 재설정
-          </p>
+        {/* ─── 빠른 ZIP 등록 (간소화) ─── */}
+        <section className="p-4 rounded-2xl bg-gradient-to-br from-indigo-900/50 to-purple-900/30 border border-indigo-700/40">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-semibold text-indigo-200">
+              📦 ZIP 파일 등록
+            </div>
+            <button
+              className="text-[11px] text-indigo-300 underline"
+              onClick={() => onOpenSetupWizard?.()}
+            >
+              마법사 다시 열기
+            </button>
+          </div>
+
+          <label className="block w-full">
+            <div
+              className={`w-full py-3 rounded-xl border-2 border-dashed text-center cursor-pointer transition text-sm
+                ${
+                  zipLoading
+                    ? "border-gray-600 text-gray-500"
+                    : "border-indigo-500 hover:border-indigo-400 text-indigo-200 bg-indigo-950/30"
+                }`}
+            >
+              {zipLoading ? (
+                <div className="flex flex-col items-center gap-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs">
+                      {zipProgress.phase === "opening" && "ZIP 열기..."}
+                      {zipProgress.phase === "reading_texts" &&
+                        `텍스트 읽는 중 ${zipProgress.loaded}/${zipProgress.total}`}
+                      {zipProgress.phase === "parsing" && "파싱 중..."}
+                      {zipProgress.phase === "done" && "완료!"}
+                    </span>
+                  </div>
+                  {zipProgress.total > 0 && (
+                    <div className="w-40 h-1 bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-indigo-400 transition-all"
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <span>📦 ZIP 파일 선택해서 바로 등록</span>
+              )}
+            </div>
+            <input
+              type="file"
+              accept=".zip"
+              className="hidden"
+              onChange={handleZipUploadInSettings}
+              disabled={zipLoading}
+            />
+          </label>
+
+          {zipError && (
+            <div className="mt-2 p-2 rounded-lg bg-red-900/50 text-red-300 text-[11px]">
+              {zipError}
+            </div>
+          )}
+          {zipDoneMsg && (
+            <div className="mt-2 p-2 rounded-lg bg-green-900/40 text-green-300 text-[11px]">
+              {zipDoneMsg}
+            </div>
+          )}
         </section>
 
         {/* 2-컬럼 레이아웃 */}
@@ -138,6 +360,123 @@ export default function SettingsView(props) {
                 </option>
               ))}
             </select>
+
+            {/* ─── 이름 편집 (마스터 토글 방식) ─── */}
+            <div className="mt-5 p-4 rounded-2xl bg-gray-900/60 border border-gray-700/40">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <label className="text-sm font-semibold text-gray-200 flex items-center gap-1">
+                  <Edit3 className="w-3.5 h-3.5" />
+                  이름 편집 ({selectedDepot})
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-gray-400">
+                    {nameList?.length || 0}명
+                  </span>
+                  {/* 마스터 토글 */}
+                  <button
+                    onClick={() => {
+                      setEditModeOn((v) => !v);
+                      setNameEditIdx(-1);
+                      setNameEditValue("");
+                    }}
+                    className={
+                      "px-3 py-1 rounded-lg text-[11px] font-semibold transition " +
+                      (editModeOn
+                        ? "bg-amber-500 hover:bg-amber-400 text-gray-900"
+                        : "bg-indigo-600 hover:bg-indigo-500 text-white")
+                    }
+                  >
+                    {editModeOn ? "✓ 수정 완료" : "✏️ 수정 모드"}
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-400 mb-2 leading-relaxed">
+                {editModeOn ? (
+                  <span className="text-amber-300">
+                    🔧 수정 모드 — 이름을 눌러 변경하세요. 변경한 이름은
+                    <b> 다음날에도 그대로 유지</b>됩니다 (영구 개명).
+                  </span>
+                ) : (
+                  <>인사이동이나 오타 수정시 "수정 모드"를 켜고 변경하세요.</>
+                )}
+              </p>
+
+              <div className="max-h-[280px] overflow-y-auto pr-1 space-y-1">
+                {(nameList || []).map((n, i) => {
+                  const editing = editModeOn && nameEditIdx === i;
+                  const canEdit = editModeOn;
+                  return (
+                    <div
+                      key={`${n}-${i}`}
+                      className={
+                        "flex items-center gap-2 p-1.5 rounded-lg transition " +
+                        (editing
+                          ? "bg-amber-900/30 ring-1 ring-amber-500/50"
+                          : editModeOn
+                          ? "bg-gray-800/60 hover:bg-gray-700/60 cursor-pointer"
+                          : "bg-gray-800/60")
+                      }
+                      onClick={() => {
+                        if (canEdit && !editing) beginEditName(i, n);
+                      }}
+                    >
+                      <span className="text-[11px] text-gray-500 w-6 text-right shrink-0">
+                        {i + 1}
+                      </span>
+                      {editing ? (
+                        <>
+                          <input
+                            autoFocus
+                            className="flex-1 bg-gray-700 rounded px-2 py-1 text-xs text-gray-100 outline-none focus:ring-1 focus:ring-amber-400"
+                            value={nameEditValue}
+                            onChange={(e) => setNameEditValue(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitEditName();
+                              if (e.key === "Escape") cancelEditName();
+                            }}
+                          />
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              commitEditName();
+                            }}
+                            className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-[11px] text-white"
+                          >
+                            저장
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              cancelEditName();
+                            }}
+                            className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-[11px] text-gray-300"
+                          >
+                            취소
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="flex-1 text-xs text-gray-200 truncate">
+                            {n || <span className="text-gray-500">(빈칸)</span>}
+                          </span>
+                          {editModeOn && (
+                            <span className="px-2 py-0.5 rounded bg-gray-700/60 text-[10px] text-amber-300">
+                              탭하여 수정
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+                {(nameList?.length || 0) === 0 && (
+                  <div className="text-xs text-gray-500 py-4 text-center">
+                    먼저 ZIP 또는 TSV를 등록하세요.
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* 기준일 */}
             <div className="mt-5 px-3 py-4 w-full box-border rounded-2xl bg-gray-900/60 shadow-inner border border-gray-700/40">
@@ -173,25 +512,43 @@ export default function SettingsView(props) {
 
             {/* 공휴일 관리 */}
             <div className="mt-5 p-4 rounded-2xl bg-gray-900/60 shadow-inner border border-gray-700/40 text-sm">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                 <label className="font-semibold text-gray-200">
                   공휴일 관리
                 </label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <button
-                    onClick={() => setHolidaysText("")}
-                    className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-xs text-gray-100"
+                    onClick={autoLoadKoreanHolidays}
+                    disabled={holidayLoading}
+                    className="px-2 py-1 rounded-lg bg-green-600 hover:bg-green-500 disabled:bg-gray-700 text-[11px] text-white flex items-center gap-1"
                   >
-                    휴일 완전 초기화
+                    {holidayLoading ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-white/60 border-t-transparent rounded-full animate-spin" />
+                        로딩중
+                      </>
+                    ) : (
+                      <>
+                        <Globe className="w-3 h-3" />
+                        🇰🇷 자동 등록
+                      </>
+                    )}
                   </button>
                   <button
-                    onClick={() => setHolidaysText(DEFAULT_HOLIDAYS_25_26)}
-                    className="px-2 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-xs text-white"
+                    onClick={() => setHolidaysText("")}
+                    className="px-2 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-[11px] text-gray-100"
                   >
-                    기본 살리기
+                    초기화
                   </button>
                 </div>
               </div>
+
+              {holidayMsg && (
+                <div className="mb-3 p-2 rounded-lg bg-gray-800/80 text-[11px] text-gray-200">
+                  {holidayMsg}
+                </div>
+              )}
+
               <div className="flex items-center gap-2 mb-3">
                 <input
                   type="date"
@@ -210,7 +567,7 @@ export default function SettingsView(props) {
                   }}
                   className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-xs text-white"
                 >
-                  추가
+                  수동추가
                 </button>
               </div>
               <textarea
@@ -223,18 +580,18 @@ export default function SettingsView(props) {
                 }
               />
               <div className="text-xs text-gray-400 mt-2 leading-relaxed">
-                • 날짜를 직접 입력하거나, 선택 후 '추가'를 누르면 자동으로
-                목록에 들어갑니다.
+                • <span className="text-green-300">🇰🇷 자동 등록</span> → 한국
+                공휴일(설날·추석 포함)을 인터넷으로 가져와 병합
                 <br />
-                • 쉼표(,) 또는 줄바꿈으로 여러 날짜를 구분할 수 있습니다.
-                <br />• 일요일은 자동으로 '휴일'로 처리됩니다.
+                • 쉼표(,) 또는 줄바꿈으로 수동 입력 가능
+                <br />• 일요일은 자동으로 '휴일' 처리됨
               </div>
             </div>
           </div>
 
           {/* 오른쪽 컬럼 */}
           <div className="space-y-3">
-            {/* 테마 설정 */}
+            {/* 테마 */}
             <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
               <div className="font-semibold mb-2">화면 테마</div>
               <div className="flex gap-2">
@@ -263,9 +620,6 @@ export default function SettingsView(props) {
                   다크
                 </button>
               </div>
-              <p className="mt-2 text-[11px] text-gray-400">
-                이 앱만 따로 라이트/다크를 정해서 쓸 수 있어요.
-              </p>
             </div>
 
             {/* 야간 규칙 */}
@@ -295,12 +649,9 @@ export default function SettingsView(props) {
               >
                 현재 값 모든 소속에 적용
               </button>
-              <div className="text-xs text-gray-300 mt-1">
-                * (중요!) 반드시 설정 상단의 소속을 선택하고 오세요
-              </div>
             </div>
 
-            {/* 특정 사람 강조 색상 */}
+            {/* 강조 색상 */}
             <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
               <div className="font-semibold mb-2">특정 사람 강조 색상</div>
               <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
@@ -366,62 +717,78 @@ export default function SettingsView(props) {
                   );
                 })}
               </div>
-              <div className="text-xs text-gray-400 mt-2">
-                * 색상을 탭하면 적용됩니다. '해제'로 원복.
-              </div>
             </div>
           </div>
         </section>
 
-        {/* 표 업로드/편집 */}
-        <section>
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-base font-semibold">
-              다이아 표 (업로드/편집)
-            </div>
-            <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 cursor-pointer">
-              <Upload className="w-4 h-4" />
-              파일 업로드 (CSV/TSV)
-              <input
-                type="file"
-                accept=".csv,.tsv,.txt"
-                className="hidden"
-                onChange={onUpload}
-              />
-            </label>
-          </div>
+        {/* TSV 고급편집 (기본 접힘) */}
+        <section className="rounded-2xl bg-gray-900/60 border border-gray-700/40 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setTsvOpen((v) => !v)}
+            className="w-full px-4 py-3 flex items-center justify-between text-sm hover:bg-gray-800/50 transition"
+          >
+            <span className="font-semibold text-gray-200">
+              📄 TSV 고급편집 {tsvOpen ? "▼" : "▶"}
+            </span>
+            <span className="text-[11px] text-gray-500">
+              교대·교대(외) 편집용
+            </span>
+          </button>
+          {tsvOpen && (
+            <div className="p-4 border-t border-gray-700/50">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm text-gray-300">
+                  다이아 표 (업로드/편집)
+                </div>
+                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 cursor-pointer text-xs">
+                  <Upload className="w-3.5 h-3.5" />
+                  CSV/TSV
+                  <input
+                    type="file"
+                    accept=".csv,.tsv,.txt"
+                    className="hidden"
+                    onChange={onUpload}
+                  />
+                </label>
+              </div>
 
-          {selectedDepot === "교대" && buildGyodaeTable && (
-            <div className="mb-2">
-              <button
-                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white"
-                onClick={() =>
+              {selectedDepot === "교대" && buildGyodaeTable && (
+                <div className="mb-2">
+                  <button
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white"
+                    onClick={() =>
+                      setTablesByDepot((prev) => ({
+                        ...(prev || {}),
+                        [selectedDepot]: buildGyodaeTable(),
+                      }))
+                    }
+                  >
+                    교대 21일 순환표로 채우기
+                  </button>
+                </div>
+              )}
+
+              <div className="text-xs text-gray-400 mb-1">
+                헤더:
+                순번,이름,dia,평일출근,평일퇴근,토요일출근,토요일퇴근,휴일출근,휴일퇴근
+              </div>
+              <textarea
+                className="w-full bg-gray-900 rounded-xl p-3 font-mono text-[10px] whitespace-pre overflow-x-auto resize-none"
+                rows={Math.max(
+                  10,
+                  (currentTableText || "").split("\n").length + 2
+                )}
+                value={currentTableText || ""}
+                onChange={(e) =>
                   setTablesByDepot((prev) => ({
                     ...(prev || {}),
-                    [selectedDepot]: buildGyodaeTable(),
+                    [selectedDepot]: e.target.value,
                   }))
                 }
-              >
-                교대 21일 순환표로 채우기
-              </button>
+              />
             </div>
           )}
-
-          <div className="text-xs text-gray-400 mb-1">
-            헤더 예시:
-            순번,이름,dia,평일출근,평일퇴근,토요일출근,토요일퇴근,휴일출근,휴일퇴근
-          </div>
-          <textarea
-            className="w-full bg-gray-900 rounded-xl p-3 font-mono text-[10px] whitespace-pre overflow-x-auto resize-none"
-            rows={Math.max(10, (currentTableText || "").split("\n").length + 2)}
-            value={currentTableText || ""}
-            onChange={(e) =>
-              setTablesByDepot((prev) => ({
-                ...(prev || {}),
-                [selectedDepot]: e.target.value,
-              }))
-            }
-          />
         </section>
       </div>
     </div>

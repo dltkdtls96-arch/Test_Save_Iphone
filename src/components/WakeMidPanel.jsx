@@ -1,5 +1,6 @@
 // src/components/WakeMidPanel.jsx
 import React from "react";
+import { getMidAlarmFromZip } from "../dataEngine";
 
 /* ========= helpers ========= */
 const _pad2 = (n) => String(n).padStart(2, "0");
@@ -468,6 +469,10 @@ export default function WakeMidPanel({
   routeDia, // 숫자 또는 "28","대2","휴1" 등
   row, // TSV 1행 객체(중간열 포함)
   shortcutName = "교번-알람-만들기",
+  // ─── 새 props: ZIP 기반 중간알람 계산용 ───
+  commonData = null, // commonMap[depot key] 객체
+  holidaySet = null, // Set<string> "YYYY-MM-DD"
+  routeCode = "", // 오늘의 교번 코드 (예: "25d", "4d", "25~")
 }) {
   const [cfg, setCfg] = React.useState(loadCfg);
   const [acc, setAcc] = React.useState(loadAcc);
@@ -483,14 +488,49 @@ export default function WakeMidPanel({
   /* ===== 기준시각 계산 ===== */
   const midKey = pickMidKey(routeCombo);
 
-  // 우선순위: 1) row 중간열 → 2) 소속별 DIA 테이블
-  const baseHM = React.useMemo(() => {
-    if (!midKey) return "";
+  // 우선순위: 1) ZIP alarm (가장 정확) → 2) row 중간열 → 3) 소속별 하드코딩 테이블
+  const [baseHM, baseHMSource] = React.useMemo(() => {
+    if (!midKey) return ["", ""];
+
+    // 1) ZIP alarm 기반 (제일 우선)
+    if (commonData?.alarms && routeCode) {
+      const iso = (() => {
+        const d = toValidDate(selectedDate);
+        if (!d) return null;
+        return `${d.getFullYear()}-${_pad2(d.getMonth() + 1)}-${_pad2(
+          d.getDate()
+        )}`;
+      })();
+      if (iso) {
+        const hset = holidaySet instanceof Set ? holidaySet : new Set();
+        try {
+          const zipRes = getMidAlarmFromZip(commonData, routeCode, iso, hset);
+          if (zipRes?.hm && toHM(zipRes.hm)) {
+            return [toHM(zipRes.hm), `zip:${zipRes.source}`];
+          }
+        } catch (err) {
+          console.warn("[mid alarm zip]", err);
+        }
+      }
+    }
+
+    // 2) TSV row 중간열 (구 방식)
     const fromRow = toHM(row?.[midKey]);
-    if (fromRow) return fromRow;
+    if (fromRow) return [fromRow, "row"];
+
+    // 3) 하드코딩 MID_TABLES 폴백
     const fromDepot = lookupMidFromDepot(selectedDepot, midKey, routeDia);
-    return fromDepot || "";
-  }, [midKey, row, selectedDepot, routeDia]);
+    return [fromDepot || "", fromDepot ? "table" : ""];
+  }, [
+    midKey,
+    row,
+    selectedDepot,
+    routeDia,
+    commonData,
+    holidaySet,
+    routeCode,
+    selectedDate,
+  ]);
 
   const baseDate = React.useMemo(() => {
     const d = dateFromYMDHM(selectedDate, baseHM);

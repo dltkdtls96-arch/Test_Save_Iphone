@@ -12,6 +12,7 @@ import {
   saveZipBlobToDB,
   tsvRowsToCommon,
   loadPathsIntoCommon,
+  restoreZipHandleFromDB,
   DEPOT_TO_ZIP_KEY,
 } from "./dataEngine";
 import SetupWizard from "./components/SetupWizard";
@@ -83,7 +84,7 @@ import {
 import PasswordGate from "./lock/PasswordGate";
 
 const STORAGE_KEY = "workCalendarSettingsV3";
-const DATA_VERSION = 18;
+const DATA_VERSION = 19; // v18 → v19: anchorDate 자동 갱신 로직 변경 (과거 역산 → 오늘 고정)
 
 const DEPOTS = ["안심", "월배", "경산", "문양", "교대", "교대(외)"];
 
@@ -921,7 +922,9 @@ export default function App() {
   const isAnyLocked = isHomeCalLocked || isRouteLocked;
 
   // ── 초기 로드 ──
+  const [isMigrating, setIsMigrating] = useState(false);
   useEffect(() => {
+    let migrated = false;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) {
@@ -931,6 +934,7 @@ export default function App() {
         const s = JSON.parse(raw);
         const savedDataVersion = s.dataVersion ?? 0;
         const isOldData = savedDataVersion !== DATA_VERSION;
+        migrated = isOldData;
         if (s.nightDiaByDepot) setNightDiaByDepot(s.nightDiaByDepot);
         else if (typeof s.nightDiaThreshold === "number")
           setNightDiaByDepot({
@@ -946,8 +950,10 @@ export default function App() {
         if (!s.tablesByDepot && s.tableText)
           setTablesByDepot((prev) => ({ ...prev, 안심: s.tableText }));
         if (!s.myNameMap && s.myName) setMyNameForDepot("안심", s.myName);
-        if (s.anchorDateByDepot) setAnchorDateByDepot(s.anchorDateByDepot);
-        else if (s.anchorDateStr)
+        // ⚠️ isOldData 시 anchorDateByDepot 로딩 스킵
+        if (!isOldData && s.anchorDateByDepot)
+          setAnchorDateByDepot(s.anchorDateByDepot);
+        else if (!isOldData && s.anchorDateStr)
           setAnchorDateByDepot(
             Object.fromEntries(DEPOTS.map((d) => [d, s.anchorDateStr]))
           );
@@ -963,11 +969,18 @@ export default function App() {
     } catch (e) {
       console.warn("[LOAD] 설정 로드 실패", e);
     }
+    setIsMigrating(migrated);
 
-    // commonMap IndexedDB 복원
-    loadCommonDataFromDB()
-      .then((saved) => {
+    // commonMap IndexedDB 복원 + ZIP 핸들 복원 (병렬)
+    // isOldData인 경우 이전 버전 names 회전이 잘못됐을 수 있어 commonMap도 무시
+    Promise.all([
+      migrated ? Promise.resolve(null) : loadCommonDataFromDB(),
+      restoreZipHandleFromDB("latest").catch(() => false),
+    ])
+      .then(([saved]) => {
         if (saved) setCommonMap(saved);
+        // 마이그레이션인 경우 자동 Wizard 강제 표시
+        if (migrated) setShowSetupWizard(true);
       })
       .catch(() => {});
 
@@ -1007,7 +1020,7 @@ export default function App() {
   useEffect(() => {
     if (!loaded) return;
     if (!commonMap) setShowSetupWizard(true);
-  }, [loaded]);  // 최초 1회만 체크
+  }, [loaded]); // 최초 1회만 체크
 
   // ── tablesByDepot / anchorDateByDepot 바뀔 때 commonMap 동기화 ──
   useEffect(() => {
@@ -1016,15 +1029,21 @@ export default function App() {
       const next = { ...(prev || {}) };
       for (const depot of DEPOTS) {
         const key = DEPOT_TO_ZIP_KEY[depot] || depot;
-        if (prev?.[key]?.source === "zip") continue; // ← 이 줄 추가
+        if (prev?.[key]?.source === "zip") continue; // ZIP 데이터는 건드리지 않음
         const tsv = tablesByDepot[depot],
           anchor = anchorDateByDepot[depot];
         if (!tsv || !anchor) continue;
         const rows = parsePeopleTable(tsv);
         if (!rows.length) continue;
         const existingPaths = prev?.[key]?.paths || {};
+        const existingAlarms = prev?.[key]?.alarms || {
+          nor: {},
+          sat: {},
+          hol: {},
+        };
         const updated = tsvRowsToCommon(depot, rows, anchor);
         updated.paths = existingPaths;
+        updated.alarms = existingAlarms;
         next[key] = updated;
       }
       saveCommonDataToDB(next).catch(() => {});
@@ -1032,46 +1051,129 @@ export default function App() {
     });
   }, [tablesByDepot, anchorDateByDepot, loaded]);
 
-  // ── 매일 anchorDate 자동 갱신 ──
+  // ── 매일 anchorDate 자동 갱신 (오늘로 고정) ──
+  //
+  //  원리: 각 사람의 "오늘 교번"을 기존 anchor로 한 번 계산해 저장해두고,
+  //        그 정답 매핑을 유지하도록 names 배열을 재배치한다.
+  //        그 다음 anchor = today 로 덮어쓴다.
+  //
+  //  새 공식 (anchor=today, dd=0): peopleRows_new[i].dia = gyobun[i]
+  //  → 각 i 위치에 "오늘 gyobun[i]를 받는 사람"을 넣으면 된다.
+  //
+  //  회전이 아닌 **직접 재배치**이므로 기존 anchor 계산 방식(역산/SetupWizard 모두)
+  //  과 일관되게 작동한다.
   useEffect(() => {
-    if (!loaded || !commonMap) return;
+    if (!loaded) return;
     const todayStr = fmt(today);
 
-    setAnchorDateByDepot((prev) => {
-      const next = { ...prev };
+    // 이미 모든 소속이 오늘로 되어있으면 skip
+    const allToday = DEPOTS.every(
+      (d) => (anchorDateByDepot[d] || "") === todayStr
+    );
+    if (allToday) return;
+
+    // ZIP 데이터: names 재배치
+    setCommonMap((prevMap) => {
+      if (!prevMap) return prevMap;
+      const nextMap = { ...prevMap };
+      let changed = false;
+
       for (const depot of DEPOTS) {
         const key = DEPOT_TO_ZIP_KEY[depot] || depot;
-        const data = commonMap[key];
+        const data = prevMap[key];
         if (!data?.names?.length || !data?.gyobun?.length) continue;
 
-        const myN = myNameMap[depot];
-        if (!myN) continue;
-
-        const nameIdx = data.names.findIndex(
-          (n) => n.replace(/\s/g, "") === myN.replace(/\s/g, "")
-        );
-        if (nameIdx < 0) continue;
-
-        // 현재 anchorDate로 오늘 교번 계산
-        const currentAnchor = prev[depot];
+        const currentAnchor = anchorDateByDepot[depot];
         if (!currentAnchor) continue;
+        if (currentAnchor === todayStr) continue;
 
         const anchorD = stripTime(new Date(currentAnchor));
         const dd = diffDays(today, anchorD); // today - anchorDate
-        const codeIdx = mod(nameIdx + dd, data.gyobun.length);
+        if (dd === 0) continue;
 
-        // anchorDate가 오늘이면 nameIdx번째가 오늘 교번
-        // 오늘 기준으로 재설정: anchorDate = 오늘 - (codeIdx - nameIdx)
-        const diff2 = codeIdx - nameIdx;
-        const newAnchor = new Date(today);
-        newAnchor.setDate(newAnchor.getDate() - diff2);
-        next[depot] = `${newAnchor.getFullYear()}-${String(
-          newAnchor.getMonth() + 1
-        ).padStart(2, "0")}-${String(newAnchor.getDate()).padStart(2, "0")}`;
+        const len = data.names.length;
+
+        // 기존 공식으로 "오늘 각 사람이 있어야 할 gyobun 인덱스"를 계산:
+        //   names[i] 의 오늘 교번 = gyobun[mod(i + dd, len)]
+        // 새 배치에서는 dd=0 이므로 names_new[j] 의 오늘 교번 = gyobun[j]
+        // 즉 names_new[j] = names[i]  where  mod(i + dd, len) = j
+        //                 = names[mod(j - dd, len)]
+        const newNames = new Array(len);
+        for (let j = 0; j < len; j++) {
+          const oldI = (((j - dd) % len) + len) % len;
+          newNames[j] = data.names[oldI];
+        }
+
+        nextMap[key] = { ...data, names: newNames };
+        changed = true;
+      }
+
+      if (changed) {
+        saveCommonDataToDB(nextMap).catch(() => {});
+      }
+      return changed ? nextMap : prevMap;
+    });
+
+    // TSV 행: 이름 칸만 재배치 (교대/교대(외))
+    setTablesByDepot((prevTables) => {
+      const nextTables = { ...prevTables };
+      let changed = false;
+
+      for (const depot of DEPOTS) {
+        const key = DEPOT_TO_ZIP_KEY[depot] || depot;
+        if (commonMap?.[key]?.source === "zip") continue; // ZIP은 위에서 처리
+
+        const currentAnchor = anchorDateByDepot[depot];
+        if (!currentAnchor) continue;
+        if (currentAnchor === todayStr) continue;
+
+        const tsv = prevTables[depot];
+        if (!tsv) continue;
+        const lines = tsv.split(/\r?\n/);
+        if (lines.length < 2) continue;
+
+        const header = lines[0];
+        const dataLines = lines.slice(1).filter((l) => l.trim());
+        if (!dataLines.length) continue;
+
+        const anchorD = stripTime(new Date(currentAnchor));
+        const dd = diffDays(today, anchorD);
+        if (dd === 0) continue;
+
+        const len = dataLines.length;
+        const names = dataLines.map((row) => row.split("\t")[1] || "");
+
+        // names_new[j] = names[mod(j - dd, len)]
+        const newNames = new Array(len);
+        for (let j = 0; j < len; j++) {
+          const oldI = (((j - dd) % len) + len) % len;
+          newNames[j] = names[oldI];
+        }
+
+        const newDataLines = dataLines.map((row, i) => {
+          const cols = row.split("\t");
+          cols[1] = newNames[i];
+          return cols.join("\t");
+        });
+
+        nextTables[depot] = [header, ...newDataLines].join("\n");
+        changed = true;
+      }
+
+      return changed ? nextTables : prevTables;
+    });
+
+    // 모든 anchor를 오늘로 덮어쓰기
+    setAnchorDateByDepot((prev) => {
+      const next = { ...prev };
+      for (const depot of DEPOTS) {
+        if (next[depot] !== todayStr) {
+          next[depot] = todayStr;
+        }
       }
       return next;
     });
-  }, [loaded, commonMap, myNameMap]);
+  }, [loaded, commonMap, fmt(today)]);
 
   // ── SetupWizard 완료 ──
   async function handleSetupComplete(result) {
@@ -2635,9 +2737,10 @@ export default function App() {
                   onTouchEnd={swipeRouteP0.onEnd(goPrevDay, goNextDay)}
                   style={swipeRouteP0.style}
                 >
-                  {/* ✅ 새 방식: RouteImageView */}
+                  {/* ✅ 새 방식: RouteImageView (v3 - common 전체 전달) */}
                   <RouteImageView
                     paths={currentPaths}
+                    common={currentCommonData}
                     depot={selectedDepot}
                     code={routeCodeStr}
                     dateStr={fmt(selectedDate)}
@@ -2886,6 +2989,9 @@ export default function App() {
                     routeDia={routeRow?.dia ?? null}
                     row={routeRow}
                     shortcutName="교번-알람-만들기"
+                    commonData={currentCommonData}
+                    holidaySet={holidaySet}
+                    routeCode={routeCodeStr}
                   />
                 </div>
               </div>
@@ -2951,6 +3057,8 @@ export default function App() {
                 theme,
                 setTheme,
                 onOpenSetupWizard: () => setShowSetupWizard(true),
+                commonMap,
+                setCommonMap,
               }}
             />
           </React.Suspense>
