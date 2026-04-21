@@ -596,6 +596,11 @@ export default function App() {
     open: false,
     oldName: "",
     oldCode: "",
+    // 되돌리기용 메타
+    baseName: "", // override 적용 전 원본 이름
+    baseCode: "", // override 적용 전 원본 교번
+    hasTodayCode: false, // 오늘 교번 override 걸려있는지
+    hasTodayName: false, // 오늘 이름 override 걸려있는지
   });
   const [rosterEditMode, setRosterEditMode] = useState(false);
 
@@ -723,20 +728,98 @@ export default function App() {
     return !!nameOverridesByDepot?.[depot]?.[iso]?.[name];
   }
 
-  // 영구 개명: commonMap.names[idx] = newName
-  async function applyPermanentRename(oldName, newName) {
-    if (!oldName || !newName || oldName === newName) return;
+  // 영구 개명/교환:
+  //   newName 이 기존에 없는 이름이면  → 단순 개명 (names[idx] = newName)
+  //   newName 이 기존 인물이면         → swap (두 사람 자리 교환)
+  async function applyPermanentRename(oldNameIn, newNameIn) {
+    // 입력 정규화: 앞뒤 공백 제거 + 중간 다중 공백 축약
+    const clean = (s) =>
+      String(s || "")
+        .replace(/\s+/g, " ")
+        .trim();
+    const oldName = clean(oldNameIn);
+    const newName = clean(newNameIn);
+    if (!oldName || !newName) return;
+
     const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
     const common = commonMap?.[key];
     if (!common?.names) return;
-    const idx = common.names.findIndex(
-      (n) => (n || "").replace(/\s/g, "") === (oldName || "").replace(/\s/g, "")
-    );
-    if (idx < 0) return;
+
+    // 비교용 정규화 (공백 전부 제거 + 소문자)
+    const norm = (s) =>
+      String(s || "")
+        .replace(/\s+/g, "")
+        .toLowerCase();
+    const oldKey = norm(oldName);
+    const newKey = norm(newName);
+
+    // 실질적으로 같은 이름이면 단순 trim 업데이트 후 리턴
+    if (oldKey === newKey) {
+      // 공백/대소문자만 다른 경우 → names 엔트리 표기 정리
+      const idx = common.names.findIndex((n) => norm(n) === oldKey);
+      if (idx >= 0 && common.names[idx] !== newName) {
+        const newNames = [...common.names];
+        newNames[idx] = newName;
+        const nextMap = { ...commonMap, [key]: { ...common, names: newNames } };
+        setCommonMap(nextMap);
+        try {
+          await saveCommonDataToDB(nextMap);
+        } catch {}
+      }
+      return;
+    }
+
+    // oldName 위치 찾기
+    const idxACandidates = common.names
+      .map((n, i) => ({ n, i }))
+      .filter((x) => norm(x.n) === oldKey);
+    if (idxACandidates.length === 0) return;
+    if (idxACandidates.length > 1) {
+      // 동명이인인 oldName이 여러 명 — 가장 가까운 위치를 특정할 수 없으니 중단
+      console.warn(
+        `[applyPermanentRename] "${oldName}" 동명이인 ${idxACandidates.length}명 — 처리 중단`
+      );
+      alert(
+        `"${oldName}" 이름을 가진 사람이 ${idxACandidates.length}명입니다.\n` +
+          `중복을 먼저 정리한 후 다시 시도해주세요.`
+      );
+      return;
+    }
+    const idxA = idxACandidates[0].i;
+
+    // newName 매칭 찾기 (본인 제외)
+    const idxBCandidates = common.names
+      .map((n, i) => ({ n, i }))
+      .filter((x) => norm(x.n) === newKey && x.i !== idxA);
+
+    if (idxBCandidates.length > 1) {
+      alert(
+        `"${newName}" 이름을 가진 사람이 여러 명입니다.\n자리 교환 대상을 특정할 수 없습니다.`
+      );
+      return;
+    }
+    const idxB = idxBCandidates.length === 1 ? idxBCandidates[0].i : -1;
+    const isSwap = idxB >= 0;
 
     const newNames = [...common.names];
-    newNames[idx] = newName;
-    const nextMap = { ...commonMap, [key]: { ...common, names: newNames } };
+    const oldPhones = common.phones || [];
+    const newPhones = [...oldPhones];
+
+    if (isSwap) {
+      newNames[idxA] = common.names[idxB];
+      newNames[idxB] = common.names[idxA];
+      if (oldPhones.length === common.names.length) {
+        newPhones[idxA] = oldPhones[idxB] || "";
+        newPhones[idxB] = oldPhones[idxA] || "";
+      }
+    } else {
+      newNames[idxA] = newName;
+    }
+
+    const nextMap = {
+      ...commonMap,
+      [key]: { ...common, names: newNames, phones: newPhones },
+    };
     setCommonMap(nextMap);
     try {
       await saveCommonDataToDB(nextMap);
@@ -747,19 +830,40 @@ export default function App() {
       const tsv = prev?.[selectedDepot];
       if (!tsv) return prev;
       const lines = tsv.split(/\r?\n/);
-      if (lines.length > idx + 1) {
-        const cols = lines[idx + 1].split("\t");
-        if (cols.length >= 2) {
-          cols[1] = newName;
-          lines[idx + 1] = cols.join("\t");
-          return { ...prev, [selectedDepot]: lines.join("\n") };
+      if (isSwap) {
+        const aLine = idxA + 1;
+        const bLine = idxB + 1;
+        if (lines.length > Math.max(aLine, bLine)) {
+          const aCols = lines[aLine].split("\t");
+          const bCols = lines[bLine].split("\t");
+          if (aCols.length >= 2 && bCols.length >= 2) {
+            const tmp = aCols[1];
+            aCols[1] = bCols[1];
+            bCols[1] = tmp;
+            lines[aLine] = aCols.join("\t");
+            lines[bLine] = bCols.join("\t");
+            return { ...prev, [selectedDepot]: lines.join("\n") };
+          }
+        }
+      } else {
+        if (lines.length > idxA + 1) {
+          const cols = lines[idxA + 1].split("\t");
+          if (cols.length >= 2) {
+            cols[1] = newName;
+            lines[idxA + 1] = cols.join("\t");
+            return { ...prev, [selectedDepot]: lines.join("\n") };
+          }
         }
       }
       return prev;
     });
 
-    // ── override 이관 (oldName → newName) ──
-    // 1) 교번 override: 이름 키를 newName으로 이관
+    // ── override 이관 ──
+    // 실제 저장된 names[idxA]/names[idxB] 를 키로 사용
+    const actualOldName = common.names[idxA];
+    const actualNewName = isSwap ? common.names[idxB] : newName;
+
+    // 교번 override
     setOverridesByDepot((prev) => {
       const depotMap = prev?.[selectedDepot];
       if (!depotMap) return prev;
@@ -767,18 +871,38 @@ export default function App() {
       let changed = false;
       Object.keys(nextDepotMap).forEach((iso) => {
         const dayMap = nextDepotMap[iso];
-        if (dayMap && Object.prototype.hasOwnProperty.call(dayMap, oldName)) {
-          const nextDay = { ...dayMap };
-          nextDay[newName] = nextDay[oldName];
-          delete nextDay[oldName];
-          nextDepotMap[iso] = nextDay;
-          changed = true;
+        if (!dayMap) return;
+        const hasOld = Object.prototype.hasOwnProperty.call(
+          dayMap,
+          actualOldName
+        );
+        const hasNew = Object.prototype.hasOwnProperty.call(
+          dayMap,
+          actualNewName
+        );
+        if (!hasOld && !hasNew) return;
+        const nextDay = { ...dayMap };
+        if (isSwap) {
+          const a = hasOld ? dayMap[actualOldName] : undefined;
+          const b = hasNew ? dayMap[actualNewName] : undefined;
+          if (hasOld) delete nextDay[actualOldName];
+          if (hasNew) delete nextDay[actualNewName];
+          if (a !== undefined) nextDay[actualNewName] = a;
+          if (b !== undefined) nextDay[actualOldName] = b;
+        } else {
+          if (hasOld) {
+            nextDay[actualNewName] = dayMap[actualOldName];
+            delete nextDay[actualOldName];
+          }
         }
+        if (Object.keys(nextDay).length === 0) delete nextDepotMap[iso];
+        else nextDepotMap[iso] = nextDay;
+        changed = true;
       });
       return changed ? { ...prev, [selectedDepot]: nextDepotMap } : prev;
     });
 
-    // 2) 이름 override: oldName 키 제거 (이미 영구 개명됐으므로 불필요)
+    // 이름 override: 두 이름 모두 해제
     setNameOverridesByDepot((prev) => {
       const depotMap = prev?.[selectedDepot];
       if (!depotMap) return prev;
@@ -786,29 +910,51 @@ export default function App() {
       let changed = false;
       Object.keys(nextDepotMap).forEach((iso) => {
         const dayMap = nextDepotMap[iso];
-        if (dayMap && Object.prototype.hasOwnProperty.call(dayMap, oldName)) {
-          const nextDay = { ...dayMap };
-          delete nextDay[oldName];
-          if (Object.keys(nextDay).length === 0) delete nextDepotMap[iso];
-          else nextDepotMap[iso] = nextDay;
-          changed = true;
-        }
+        if (!dayMap) return;
+        const hasOld = Object.prototype.hasOwnProperty.call(
+          dayMap,
+          actualOldName
+        );
+        const hasNew = Object.prototype.hasOwnProperty.call(
+          dayMap,
+          actualNewName
+        );
+        if (!hasOld && !hasNew) return;
+        const nextDay = { ...dayMap };
+        delete nextDay[actualOldName];
+        delete nextDay[actualNewName];
+        if (Object.keys(nextDay).length === 0) delete nextDepotMap[iso];
+        else nextDepotMap[iso] = nextDay;
+        changed = true;
       });
       return changed ? { ...prev, [selectedDepot]: nextDepotMap } : prev;
     });
 
-    // 내 이름이면 연동
-    if (myName === oldName) setMyNameForDepot(selectedDepot, newName);
-    if (routeTargetName === oldName) setRouteTargetName(newName);
+    // 내 이름/행로 대상 연동
+    if (!isSwap) {
+      if (myName === actualOldName) setMyNameForDepot(selectedDepot, newName);
+      if (routeTargetName === actualOldName) setRouteTargetName(newName);
+    }
   }
 
   // 오늘 하루만: nameOverridesByDepot 에 저장
-  function applyTodayRename(oldName, newName, dateObj) {
+  function applyTodayRename(oldNameIn, newNameIn, dateObj) {
+    const clean = (s) =>
+      String(s || "")
+        .replace(/\s+/g, " ")
+        .trim();
+    const oldName = clean(oldNameIn);
+    const newName = clean(newNameIn);
+    const norm = (s) =>
+      String(s || "")
+        .replace(/\s+/g, "")
+        .toLowerCase();
     const iso = fmt(stripTime(new Date(dateObj)));
     setNameOverridesByDepot((prev) => {
       const depotMap = { ...(prev?.[selectedDepot] || {}) };
       const dayMap = { ...(depotMap[iso] || {}) };
-      if (!newName || newName === oldName) {
+      // 실질적으로 같은 이름이면 override 해제
+      if (!newName || norm(newName) === norm(oldName)) {
         delete dayMap[oldName];
       } else {
         dayMap[oldName] = newName;
@@ -1346,7 +1492,7 @@ export default function App() {
       depot,
       myName: wizName,
       myCode,
-      anchorDate: wizAnchor, // Wizard가 계산한 과거 anchor
+      anchorDate: wizAnchor, // Wizard가 today로 보냄 (이미 오늘 배치 완료)
       commonMap: newMap,
     } = result;
 
@@ -1354,6 +1500,8 @@ export default function App() {
 
     let finalMap = { ...(commonMap || {}) };
     if (mode === "zip") {
+      // Wizard가 이미 names 를 오늘 정답 배치로 만들어서 넘김
+      // (baseDate 도 today 로 세팅됨)
       Object.assign(finalMap, newMap);
     } else {
       if (newMap?._pathsOnly)
@@ -1361,51 +1509,7 @@ export default function App() {
           finalMap[key] = loadPathsIntoCommon(finalMap[key], newMap._pathsOnly);
     }
 
-    // ─── 여기가 핵심 수정 ───
-    // Wizard는 "anchor = today - (codeIdx - nameIdx)" 식으로 과거 anchor를 계산해줌.
-    // 우리는 대신 "anchor = today + names 배열 재배치"로 변환한다.
-    //
-    // 재배치 공식:
-    //   names_new[j] = names_old[i]  where  mod(i + dd, len) = j
-    //   = names_old[mod(j - dd, len)]
-    //   dd = today - wizAnchor
-    //
-    if (mode === "zip") {
-      const key = DEPOT_TO_ZIP_KEY[depot] || depot;
-      const zipData = finalMap[key];
-      if (
-        zipData?.names?.length &&
-        zipData?.gyobun?.length &&
-        wizAnchor &&
-        wizAnchor !== todayISO
-      ) {
-        const anchorD = stripTime(new Date(wizAnchor));
-        const dd = diffDays(today, anchorD);
-        const len = zipData.names.length;
-        if (dd !== 0 && len > 0) {
-          const newNames = new Array(len);
-          const newPhones = new Array(len);
-          const oldPhones = zipData.phones || [];
-          for (let j = 0; j < len; j++) {
-            const oldI = (((j - dd) % len) + len) % len;
-            newNames[j] = zipData.names[oldI];
-            newPhones[j] = oldPhones[oldI] || "";
-          }
-          finalMap[key] = {
-            ...zipData,
-            names: newNames,
-            phones: newPhones,
-            baseDate: todayISO,
-          };
-        } else {
-          finalMap[key] = { ...zipData, baseDate: todayISO };
-        }
-      } else if (zipData) {
-        finalMap[key] = { ...zipData, baseDate: todayISO };
-      }
-    }
-
-    // ZIP 모드: tablesByDepot에도 재배치된 이름으로 TSV 생성
+    // ZIP 모드: tablesByDepot에도 오늘 배치된 이름으로 TSV 생성
     if (mode === "zip") {
       const key = DEPOT_TO_ZIP_KEY[depot] || depot;
       const zipData = finalMap[key];
@@ -1442,7 +1546,7 @@ export default function App() {
     saveCommonDataToDB(finalMap).catch(() => {});
     setSelectedDepot(depot);
     if (wizName) setMyNameForDepot(depot, wizName);
-    // ⚠️ 과거 날짜(wizAnchor)가 아니라 오늘 날짜로 세팅
+    // anchor = today (Wizard가 이미 오늘 배치로 넘겼으므로)
     setAnchorDateByDepot((prev) => ({ ...prev, [depot]: todayISO }));
     setShowSetupWizard(false);
   }
@@ -1633,6 +1737,8 @@ export default function App() {
     nightDiaThreshold,
     selectedDepot,
     overridesByDepot,
+    commonMap,
+    anchorDateStr,
   ]);
 
   const nameGridRows = useMemo(() => {
@@ -1640,7 +1746,14 @@ export default function App() {
     return [...rows].sort((a, b) =>
       String(a.name).localeCompare(String(b.name), "ko")
     );
-  }, [selectedDate, nameList, selectedDepot, overridesByDepot, anchorDateStr]);
+  }, [
+    selectedDate,
+    nameList,
+    selectedDepot,
+    overridesByDepot,
+    anchorDateStr,
+    commonMap,
+  ]);
 
   const days = monthGridMonday(selectedDate);
   const todayISO = fmt(today);
@@ -2013,7 +2126,14 @@ export default function App() {
   const routeTarget = routeTargetName || myName;
   const routeRow = React.useMemo(
     () => rowAtDateForNameWithOverride(routeTarget, selectedDate),
-    [routeTarget, selectedDate, selectedDepot]
+    [
+      routeTarget,
+      selectedDate,
+      selectedDepot,
+      overridesByDepot, // 교번 override 적용/해제 반영
+      commonMap, // 영구 변경(swap) 반영
+      anchorDateStr, // anchor 이동 시 반영
+    ]
   );
   const routeT = React.useMemo(
     () => computeInOut(routeRow, selectedDate, holidaySet, nightDiaThreshold),
@@ -2050,6 +2170,27 @@ export default function App() {
     }
     return map;
   }, [currentCommonData]);
+
+  // 수정모드 셀 탭 → PersonEditModal 열기 (override 정보 함께 전달)
+  function openPersonEditModal(name, row) {
+    const iso = fmt(stripTime(new Date(selectedDate)));
+    const hasTodayCode = !!overridesByDepot?.[selectedDepot]?.[iso]?.[name];
+    const hasTodayName = !!nameOverridesByDepot?.[selectedDepot]?.[iso]?.[name];
+    // row 는 override 적용된 상태 → base 를 따로 계산
+    const baseRow = rowAtDateForName(name, selectedDate);
+    const baseCode = tsvDiaToRouteCode(baseRow?.dia);
+    // 현재 표시중인 교번(override 적용)
+    const currentCode = tsvDiaToRouteCode(row?.dia);
+    setPersonEditModal({
+      open: true,
+      oldName: name,
+      oldCode: currentCode,
+      baseName: name,
+      baseCode,
+      hasTodayCode,
+      hasTodayName,
+    });
+  }
 
   const routeTargetPhone = React.useMemo(() => {
     const p =
@@ -2617,13 +2758,7 @@ export default function App() {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
-                    onEditTap={(name, row) =>
-                      setPersonEditModal({
-                        open: true,
-                        oldName: name,
-                        oldCode: tsvDiaToRouteCode(row?.dia),
-                      })
-                    }
+                    onEditTap={openPersonEditModal}
                     editMode={rosterEditMode}
                     displayName={displayName}
                     hasNameOverride={hasNameOverride}
@@ -2653,13 +2788,7 @@ export default function App() {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
-                    onEditTap={(name, row) =>
-                      setPersonEditModal({
-                        open: true,
-                        oldName: name,
-                        oldCode: tsvDiaToRouteCode(row?.dia),
-                      })
-                    }
+                    onEditTap={openPersonEditModal}
                     editMode={rosterEditMode}
                     displayName={displayName}
                     hasNameOverride={hasNameOverride}
@@ -2687,13 +2816,7 @@ export default function App() {
                       setRouteTargetName(name);
                       triggerRouteTransition();
                     }}
-                    onEditTap={(name, row) =>
-                      setPersonEditModal({
-                        open: true,
-                        oldName: name,
-                        oldCode: tsvDiaToRouteCode(row?.dia),
-                      })
-                    }
+                    onEditTap={openPersonEditModal}
                     editMode={rosterEditMode}
                     displayName={displayName}
                     hasNameOverride={hasNameOverride}
@@ -2818,13 +2941,7 @@ export default function App() {
                     window.triggerRouteTransition();
                   else setSelectedTab("route");
                 }}
-                onEditTap={(name, row) =>
-                  setPersonEditModal({
-                    open: true,
-                    oldName: name,
-                    oldCode: tsvDiaToRouteCode(row?.dia),
-                  })
-                }
+                onEditTap={openPersonEditModal}
                 editMode={rosterEditMode}
                 displayName={displayName}
                 hasNameOverride={hasNameOverride}
@@ -2852,13 +2969,7 @@ export default function App() {
                     window.triggerRouteTransition();
                   else setSelectedTab("route");
                 }}
-                onEditTap={(name, row) =>
-                  setPersonEditModal({
-                    open: true,
-                    oldName: name,
-                    oldCode: tsvDiaToRouteCode(row?.dia),
-                  })
-                }
+                onEditTap={openPersonEditModal}
                 editMode={rosterEditMode}
                 displayName={displayName}
                 hasNameOverride={hasNameOverride}
@@ -2886,13 +2997,7 @@ export default function App() {
                     window.triggerRouteTransition();
                   else setSelectedTab("route");
                 }}
-                onEditTap={(name, row) =>
-                  setPersonEditModal({
-                    open: true,
-                    oldName: name,
-                    oldCode: tsvDiaToRouteCode(row?.dia),
-                  })
-                }
+                onEditTap={openPersonEditModal}
                 editMode={rosterEditMode}
                 displayName={displayName}
                 hasNameOverride={hasNameOverride}
@@ -3173,13 +3278,7 @@ export default function App() {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
-                    onEditTap={(name, row) =>
-                      setPersonEditModal({
-                        open: true,
-                        oldName: name,
-                        oldCode: tsvDiaToRouteCode(row?.dia),
-                      })
-                    }
+                    onEditTap={openPersonEditModal}
                     editMode={rosterEditMode}
                     displayName={displayName}
                     hasNameOverride={hasNameOverride}
@@ -3209,13 +3308,7 @@ export default function App() {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
-                    onEditTap={(name, row) =>
-                      setPersonEditModal({
-                        open: true,
-                        oldName: name,
-                        oldCode: tsvDiaToRouteCode(row?.dia),
-                      })
-                    }
+                    onEditTap={openPersonEditModal}
                     editMode={rosterEditMode}
                     displayName={displayName}
                     hasNameOverride={hasNameOverride}
@@ -3245,13 +3338,7 @@ export default function App() {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
-                    onEditTap={(name, row) =>
-                      setPersonEditModal({
-                        open: true,
-                        oldName: name,
-                        oldCode: tsvDiaToRouteCode(row?.dia),
-                      })
-                    }
+                    onEditTap={openPersonEditModal}
                     editMode={rosterEditMode}
                     displayName={displayName}
                     hasNameOverride={hasNameOverride}
@@ -3549,12 +3636,55 @@ export default function App() {
         open={personEditModal.open}
         oldName={personEditModal.oldName}
         oldCode={personEditModal.oldCode}
+        baseName={personEditModal.baseName}
+        baseCode={personEditModal.baseCode}
+        hasTodayCode={personEditModal.hasTodayCode}
+        hasTodayName={personEditModal.hasTodayName}
         nameList={nameList}
         codeList={currentGyobunList}
         codeOwnerMap={codeOwnerMap}
         onClose={() =>
-          setPersonEditModal({ open: false, oldName: "", oldCode: "" })
+          setPersonEditModal({
+            open: false,
+            oldName: "",
+            oldCode: "",
+            baseName: "",
+            baseCode: "",
+            hasTodayCode: false,
+            hasTodayName: false,
+          })
         }
+        onResetToday={(kind) => {
+          // kind: "name" | "code"
+          const name = personEditModal.oldName;
+          const iso = fmt(stripTime(new Date(selectedDate)));
+          if (kind === "code") {
+            setOverride(
+              selectedDepot,
+              stripTime(new Date(selectedDate)),
+              name,
+              null
+            );
+          } else if (kind === "name") {
+            setNameOverridesByDepot((prev) => {
+              const depotMap = { ...(prev?.[selectedDepot] || {}) };
+              const dayMap = { ...(depotMap[iso] || {}) };
+              delete dayMap[name];
+              if (Object.keys(dayMap).length === 0) delete depotMap[iso];
+              else depotMap[iso] = dayMap;
+              return { ...prev, [selectedDepot]: depotMap };
+            });
+          }
+          setPersonEditModal({
+            open: false,
+            oldName: "",
+            oldCode: "",
+            baseName: "",
+            baseCode: "",
+            hasTodayCode: false,
+            hasTodayName: false,
+          });
+        }}
         onApply={async ({ newName, newCode }, scope) => {
           const oldName = personEditModal.oldName;
           // 영구 개명 시 oldName→newName 이관이 일어나므로,

@@ -175,74 +175,53 @@ export default function SetupWizard({
   function handleComplete() {
     if (!myCode) return;
     const today = todayStr();
-    let anchorDate = today;
 
     const key = DEPOT_TO_KEY[depot] || depot;
     let data = (mode === "zip" ? commonMap : existingTsvData)?.[key];
     let effectiveCommonMap = commonMap;
 
-    if (data?.gyobun?.length && data?.names?.length) {
+    if (
+      mode === "zip" &&
+      data?.gyobun?.length &&
+      data?.names?.length &&
+      data?.baseDate
+    ) {
       const len = data.names.length;
-      const isNewName =
-        mode === "zip" && myName && !data.names.includes(myName);
+      const isNewName = myName && !data.names.includes(myName);
 
-      // ⚡ 새 이름 처리: 사용자가 선택한 myCode 위치에 이 이름을 "주입"
-      //   (원래 그 자리 사람의 이름을 새 이름으로 덮어씀)
-      //   → 주입 후 일반 공식대로 anchor 계산됨
+      // 🔑 오늘 정답 배치를 직접 계산:
+      // 목표: names_today[i] = "오늘 교번 gyobun[i]를 받는 사람"
+      // dataEngine 공식: names_orig[k]의 오늘 교번 = gyobun[(k + today-baseDate) mod len]
+      // 역으로, 오늘 gyobun[i]를 받는 사람 = names_orig[mod(i - (today-baseDate), len)]
+      const offset = diffDays(data.baseDate, today); // today - baseDate
+      const namesToday = new Array(len);
+      const phonesToday = new Array(len);
+      const oldPhones = data.phones || [];
+      for (let i = 0; i < len; i++) {
+        const origIdx = (((i - offset) % len) + len) % len;
+        namesToday[i] = data.names[origIdx];
+        phonesToday[i] = oldPhones[origIdx] || "";
+      }
+
+      // 새 이름 주입: myCode 자리에 myName
       if (isNewName) {
         const codeIdx = data.gyobun.findIndex(
           (c) => c.trim().toLowerCase() === myCode.trim().toLowerCase()
         );
         if (codeIdx >= 0) {
-          // 오늘 codeIdx 위치의 사람을 myName으로 교체
-          // 오늘 공식: nameIdx = mod(codeIdx - dd, len). 근데 우리는 "새 이름이
-          // 오늘 myCode를 받도록" 만들려면 → 오늘 해당하는 위치를 찾아 이름 치환
-          // info.txt 기준 offset: baseName → baseCode 관계 그대로 유지
-          // 오늘 myCode를 받는 name의 위치 = mod(codeIdx - dd0, len) where dd0 = today - baseDate
-          // 간단히: getCodeForDate로 "오늘 그 코드를 받는" 사람 이름 찾아서 교체
-          let targetIdx = -1;
-          for (let i = 0; i < len; i++) {
-            const n = data.names[i];
-            const c = getCodeForDate(data, n, today);
-            if (c && c.trim().toLowerCase() === myCode.trim().toLowerCase()) {
-              targetIdx = i;
-              break;
-            }
-          }
-          if (targetIdx >= 0) {
-            const newNames = [...data.names];
-            newNames[targetIdx] = myName;
-            data = { ...data, names: newNames };
-            effectiveCommonMap = { ...commonMap, [key]: data };
-          }
+          namesToday[codeIdx] = myName;
+          phonesToday[codeIdx] = "";
         }
       }
 
-      const nameIdx = data.names.findIndex(
-        (n) => n.replace(/\s/g, "") === myName.replace(/\s/g, "")
-      );
-      const codeIdx = data.gyobun.findIndex(
-        (c) => c.trim().toLowerCase() === myCode.trim().toLowerCase()
-      );
-
-      if (nameIdx >= 0 && codeIdx >= 0) {
-        // App.jsx 공식: idx = mod(nameIdx + diffDays(date, anchorDate), len)
-        // 오늘 idx=codeIdx 가 되려면: mod(nameIdx + diffDays(오늘, anchorDate), len) = codeIdx
-        // diffDays(오늘, anchorDate) = codeIdx - nameIdx
-        // anchorDate = 오늘에서 (codeIdx - nameIdx)일 뺀 날
-        // 단, diffDays(오늘, anchorDate) = (오늘 - anchorDate) 이므로
-        // 오늘 - anchorDate = codeIdx - nameIdx
-        // anchorDate = 오늘 - (codeIdx - nameIdx)
-        const diff = codeIdx - nameIdx;
-        // 날짜 계산은 App.jsx와 동일하게 UTC 기준으로
-        const [y, m, d] = today.split("-").map(Number);
-        const base = new Date(y, m - 1, d); // 로컬 자정
-        base.setDate(base.getDate() - diff);
-        const yy = base.getFullYear();
-        const mm = String(base.getMonth() + 1).padStart(2, "0");
-        const dd2 = String(base.getDate()).padStart(2, "0");
-        anchorDate = `${yy}-${mm}-${dd2}`;
-      }
+      // baseDate = today 로 업데이트 (anchor=today 와 일치)
+      const updatedData = {
+        ...data,
+        names: namesToday,
+        phones: phonesToday,
+        baseDate: today,
+      };
+      effectiveCommonMap = { ...commonMap, [key]: updatedData };
     }
 
     const finalCommonMap =
@@ -255,7 +234,7 @@ export default function SetupWizard({
       depot,
       myName,
       myCode,
-      anchorDate,
+      anchorDate: today, // 이미 오늘 정답 배치이므로 anchor=today
       commonMap: finalCommonMap,
     });
   }
