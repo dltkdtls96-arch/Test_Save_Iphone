@@ -17,6 +17,7 @@ import {
 } from "./dataEngine";
 import SetupWizard from "./components/SetupWizard";
 import QuickCodePicker from "./components/QuickCodePicker";
+import PersonEditModal from "./components/PersonEditModal";
 import { RouteImageView, tsvDiaToRouteCode } from "./components/routeImage";
 import { useDayOverrides } from "./hooks/useDayOverrides";
 
@@ -597,6 +598,18 @@ export default function App() {
     currentCode: "",
     depot: "",
   });
+
+  // ── 근무자 편집 모달 (이름 + 교번 동시) ──
+  const [personEditModal, setPersonEditModal] = useState({
+    open: false,
+    oldName: "",
+    oldCode: "",
+  });
+  const [rosterEditMode, setRosterEditMode] = useState(false);
+
+  // 이름 override (오늘 하루만): { depot: { iso: { oldName: newName } } }
+  const [nameOverridesByDepot, setNameOverridesByDepot] = useState({});
+
   const {
     setOverride: setDayOverride,
     resetOverride: resetDayOverride,
@@ -616,8 +629,12 @@ export default function App() {
 
   function applyOverrideToRow(row, depot, dateObj, name) {
     const iso = fmt(stripTime(new Date(dateObj)));
-    const v = overridesByDepot?.[depot]?.[iso]?.[name];
-    if (!v) return row;
+    const vRaw = overridesByDepot?.[depot]?.[iso]?.[name];
+    if (vRaw == null || vRaw === "") return row;
+
+    // 값 정규화: 공백 제거 + 숫자 뒤 d/D 모두 허용
+    const v = String(vRaw).replace(/\s+/g, "");
+
     const patched = { ...(row || {}) };
     const applyTemplate = (tpl) => {
       if (!tpl) return;
@@ -625,31 +642,73 @@ export default function App() {
       patched.saturday = { ...tpl.saturday };
       patched.holiday = { ...tpl.holiday };
     };
-    if (v === "휴" || v === "비번" || v === "교육" || v === "휴가") {
-      patched.dia = v;
-      applyTemplate(labelTemplates[v?.replace(/\s+/g, "")]);
+
+    // 1) 휴/비번/교육/휴가
+    if (
+      v === "휴" ||
+      v === "비번" ||
+      v === "비" ||
+      v === "교육" ||
+      v === "휴가"
+    ) {
+      const key = v === "비" ? "비번" : v;
+      patched.dia = key;
+      applyTemplate(labelTemplates[key]);
       return patched;
     }
-    if (/^대\d+$/.test(v)) {
-      const n = Number(v.replace(/[^0-9]/g, ""));
-      patched.dia = `대${n}`;
-      const k = `대${n}`.replace(/\s+/g, "");
-      applyTemplate(labelTemplates[k] || diaTemplates[n]);
-      return patched;
-    }
+
+    // 2) 주/야
     if (v === "주" || v === "야") {
       patched.dia = v;
       applyTemplate(labelTemplates[v]);
       return patched;
     }
-    if (/^\d+D$/.test(v)) {
-      const n = Number(v.replace("D", ""));
+
+    // 3) 대기N  (먼저 검사 — 대N 정규식에 걸리지 않도록)
+    if (/^대기\d+$/.test(v)) {
+      patched.dia = v;
+      applyTemplate(labelTemplates[v]);
+      return patched;
+    }
+
+    // 4) 대N
+    if (/^대\d+$/.test(v)) {
+      const n = Number(v.replace(/[^0-9]/g, ""));
+      const key = `대${n}`;
+      patched.dia = key;
+      applyTemplate(labelTemplates[key] || diaTemplates[n]);
+      return patched;
+    }
+
+    // 5) 숫자 + d/D  ("1d", "12D", "5d" 모두 허용)
+    if (/^\d+[dD]$/.test(v)) {
+      const n = Number(v.replace(/[dD]$/, ""));
       if (Number.isFinite(n)) {
         patched.dia = n;
         applyTemplate(diaTemplates[n]);
       }
       return patched;
     }
+
+    // 6) 순수 숫자 "1", "12"
+    if (/^\d+$/.test(v)) {
+      const n = Number(v);
+      if (Number.isFinite(n)) {
+        patched.dia = n;
+        applyTemplate(diaTemplates[n]);
+      }
+      return patched;
+    }
+
+    // 7) 그 외 문자열 라벨이 labelTemplates에 있으면 사용
+    if (labelTemplates[v]) {
+      patched.dia = v;
+      applyTemplate(labelTemplates[v]);
+      return patched;
+    }
+
+    // 알 수 없는 값 — 최소한 dia 문자열만 갱신
+    patched.dia = vRaw;
     return patched;
   }
 
@@ -661,6 +720,118 @@ export default function App() {
   function hasOverride(depot, dateObj, name) {
     const iso = fmt(stripTime(new Date(dateObj)));
     return !!overridesByDepot?.[depot]?.[iso]?.[name];
+  }
+
+  // ── 이름 편집 헬퍼 ──
+  //
+  // displayName: row에 적용된 이름 override 해석
+  //   오늘 하루만 "홍길동 → 박영희" override가 있으면 displayName("홍길동", today) === "박영희"
+  function displayName(name, dateObj) {
+    const iso = fmt(stripTime(new Date(dateObj)));
+    const v = nameOverridesByDepot?.[selectedDepot]?.[iso]?.[name];
+    return v || name;
+  }
+
+  function hasNameOverride(depot, dateObj, name) {
+    const iso = fmt(stripTime(new Date(dateObj)));
+    return !!nameOverridesByDepot?.[depot]?.[iso]?.[name];
+  }
+
+  // 영구 개명: commonMap.names[idx] = newName + 관련 override 이관
+  async function applyPermanentRename(oldName, newName) {
+    if (!oldName || !newName || oldName === newName) return;
+    const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
+    const common = commonMap?.[key];
+    if (!common?.names) return;
+    const idx = common.names.findIndex(
+      (n) => (n || "").replace(/\s/g, "") === (oldName || "").replace(/\s/g, "")
+    );
+    if (idx < 0) return;
+
+    const newNames = [...common.names];
+    newNames[idx] = newName;
+    const nextMap = { ...commonMap, [key]: { ...common, names: newNames } };
+    setCommonMap(nextMap);
+    try {
+      await saveCommonDataToDB(nextMap);
+    } catch {}
+
+    // TSV 동기화
+    setTablesByDepot((prev) => {
+      const tsv = prev?.[selectedDepot];
+      if (!tsv) return prev;
+      const lines = tsv.split(/\r?\n/);
+      if (lines.length > idx + 1) {
+        const cols = lines[idx + 1].split("\t");
+        if (cols.length >= 2) {
+          cols[1] = newName;
+          lines[idx + 1] = cols.join("\t");
+          return { ...prev, [selectedDepot]: lines.join("\n") };
+        }
+      }
+      return prev;
+    });
+
+    // ── override 이관 (oldName → newName) ──
+    // 1) 교번 override
+    setOverridesByDepot((prev) => {
+      const depotMap = prev?.[selectedDepot];
+      if (!depotMap) return prev;
+      const nextDepotMap = { ...depotMap };
+      let changed = false;
+      Object.keys(nextDepotMap).forEach((iso) => {
+        const dayMap = nextDepotMap[iso];
+        if (dayMap && Object.prototype.hasOwnProperty.call(dayMap, oldName)) {
+          const nextDay = { ...dayMap };
+          nextDay[newName] = nextDay[oldName];
+          delete nextDay[oldName];
+          nextDepotMap[iso] = nextDay;
+          changed = true;
+        }
+      });
+      return changed ? { ...prev, [selectedDepot]: nextDepotMap } : prev;
+    });
+
+    // 2) 이름 override (혹시 oldName 키로 남아있을 수 있음)
+    setNameOverridesByDepot((prev) => {
+      const depotMap = prev?.[selectedDepot];
+      if (!depotMap) return prev;
+      const nextDepotMap = { ...depotMap };
+      let changed = false;
+      Object.keys(nextDepotMap).forEach((iso) => {
+        const dayMap = nextDepotMap[iso];
+        if (dayMap && Object.prototype.hasOwnProperty.call(dayMap, oldName)) {
+          const nextDay = { ...dayMap };
+          // oldName에 달려있던 override는 이제 불필요 (이미 영구 개명됐으므로)
+          delete nextDay[oldName];
+          if (Object.keys(nextDay).length === 0) delete nextDepotMap[iso];
+          else nextDepotMap[iso] = nextDay;
+          changed = true;
+        }
+      });
+      return changed ? { ...prev, [selectedDepot]: nextDepotMap } : prev;
+    });
+
+    // 내 이름/행로 대상 연동
+    if (myName === oldName) setMyNameForDepot(selectedDepot, newName);
+    if (routeTargetName === oldName) setRouteTargetName(newName);
+  }
+
+  // 오늘 하루만: nameOverridesByDepot 에 저장
+  function applyTodayRename(oldName, newName, dateObj) {
+    const iso = fmt(stripTime(new Date(dateObj)));
+    setNameOverridesByDepot((prev) => {
+      const depotMap = { ...(prev?.[selectedDepot] || {}) };
+      const dayMap = { ...(depotMap[iso] || {}) };
+      if (!newName || newName === oldName) {
+        delete dayMap[oldName];
+      } else {
+        dayMap[oldName] = newName;
+      }
+      if (Object.keys(dayMap).length === 0) delete depotMap[iso];
+      else depotMap[iso] = dayMap;
+      return { ...prev, [selectedDepot]: depotMap };
+    });
   }
 
   const defaultAnchorMap = useMemo(
@@ -947,6 +1118,8 @@ export default function App() {
         if (s.myNameMap) setMyNameMap(s.myNameMap);
         if (s.selectedDepot) setSelectedDepot(s.selectedDepot);
         if (s.overridesByDepot) setOverridesByDepot(s.overridesByDepot);
+        if (s.nameOverridesByDepot)
+          setNameOverridesByDepot(s.nameOverridesByDepot);
         if (!s.tablesByDepot && s.tableText)
           setTablesByDepot((prev) => ({ ...prev, 안심: s.tableText }));
         if (!s.myNameMap && s.myName) setMyNameForDepot("안심", s.myName);
@@ -1342,6 +1515,7 @@ export default function App() {
       selectedDate: fmt(selectedDate),
       compareSelected,
       overridesByDepot,
+      nameOverridesByDepot,
     };
     const timer = setTimeout(() => {
       try {
@@ -1362,6 +1536,7 @@ export default function App() {
     selectedDate,
     compareSelected,
     overridesByDepot,
+    nameOverridesByDepot,
   ]);
 
   useEffect(() => {
@@ -2407,7 +2582,18 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                <div className="flex justify-end mb-2" data-no-gesture>
+                <div className="flex justify-end mb-2 gap-1.5" data-no-gesture>
+                  <button
+                    className={
+                      "rounded-full px-3 py-1 text-sm font-semibold transition " +
+                      (rosterEditMode
+                        ? "bg-amber-500 hover:bg-amber-400 text-gray-900"
+                        : "bg-gray-700 hover:bg-gray-600 text-gray-100")
+                    }
+                    onClick={() => setRosterEditMode((v) => !v)}
+                  >
+                    {rosterEditMode ? "✓ 완료" : "✏️ 수정"}
+                  </button>
                   <button
                     className="rounded-full px-3 py-1 text-sm bg-cyan-600 text-white"
                     onClick={() =>
@@ -2423,6 +2609,11 @@ export default function App() {
                       : "순번으로 보기"}
                   </button>
                 </div>
+                {rosterEditMode && (
+                  <div className="mb-2 p-2 rounded-lg bg-amber-900/30 border border-amber-500/40 text-[11px] text-amber-200">
+                    🔧 이름 수정 모드 — 셀을 탭하면 이름 변경 창이 열립니다.
+                  </div>
+                )}
                 {/* 홈 panel1 RosterGrid — onPick 유지 (행로표 이동) */}
                 {orderMode === "person" && (
                   <RosterGrid
@@ -2437,6 +2628,16 @@ export default function App() {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
+                    onEditTap={(name, row) =>
+                      setPersonEditModal({
+                        open: true,
+                        oldName: name,
+                        oldCode: tsvDiaToRouteCode(row?.dia),
+                      })
+                    }
+                    editMode={rosterEditMode}
+                    displayName={displayName}
+                    hasNameOverride={hasNameOverride}
                     selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeHomeP1.ref,
@@ -2463,6 +2664,16 @@ export default function App() {
                         window.triggerRouteTransition();
                       else setSelectedTab("route");
                     }}
+                    onEditTap={(name, row) =>
+                      setPersonEditModal({
+                        open: true,
+                        oldName: name,
+                        oldCode: tsvDiaToRouteCode(row?.dia),
+                      })
+                    }
+                    editMode={rosterEditMode}
+                    displayName={displayName}
+                    hasNameOverride={hasNameOverride}
                     selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeHomeP1.ref,
@@ -2487,6 +2698,16 @@ export default function App() {
                       setRouteTargetName(name);
                       triggerRouteTransition();
                     }}
+                    onEditTap={(name, row) =>
+                      setPersonEditModal({
+                        open: true,
+                        oldName: name,
+                        oldCode: tsvDiaToRouteCode(row?.dia),
+                      })
+                    }
+                    editMode={rosterEditMode}
+                    displayName={displayName}
+                    hasNameOverride={hasNameOverride}
                     selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeRosterP0.ref,
@@ -2559,21 +2780,42 @@ export default function App() {
                   ))}
                 </select>
               </div>
-              <button
-                className="rounded-full px-3 py-1 text-sm bg-cyan-600 text-white"
-                onClick={() =>
-                  setOrderMode((m) =>
-                    m === "person" ? "dia" : m === "dia" ? "name" : "person"
-                  )
-                }
-              >
-                {orderMode === "person"
-                  ? "DIA 순서로 보기"
-                  : orderMode === "dia"
-                  ? "이름순으로 보기"
-                  : "순번으로 보기"}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  className={
+                    "rounded-full px-3 py-1 text-sm font-semibold transition " +
+                    (rosterEditMode
+                      ? "bg-amber-500 hover:bg-amber-400 text-gray-900"
+                      : "bg-gray-700 hover:bg-gray-600 text-gray-100")
+                  }
+                  onClick={() => setRosterEditMode((v) => !v)}
+                  title="이름 편집"
+                >
+                  {rosterEditMode ? "✓ 완료" : "✏️ 수정"}
+                </button>
+                <button
+                  className="rounded-full px-3 py-1 text-sm bg-cyan-600 text-white"
+                  onClick={() =>
+                    setOrderMode((m) =>
+                      m === "person" ? "dia" : m === "dia" ? "name" : "person"
+                    )
+                  }
+                >
+                  {orderMode === "person"
+                    ? "DIA 순서로 보기"
+                    : orderMode === "dia"
+                    ? "이름순으로 보기"
+                    : "순번으로 보기"}
+                </button>
+              </div>
             </div>
+            {rosterEditMode && (
+              <div className="mb-2 p-2 rounded-lg bg-amber-900/30 border border-amber-500/40 text-[11px] text-amber-200">
+                🔧 이름 수정 모드 — 셀을 탭하여 이름을 변경하세요.{" "}
+                <span className="text-amber-300">"오늘 하루만"</span> 또는{" "}
+                <span className="text-amber-300">"영구 개명"</span> 선택 가능.
+              </div>
+            )}
             {orderMode === "person" && (
               <RosterGrid
                 rows={rosterAt(selectedDate)}
@@ -2582,6 +2824,16 @@ export default function App() {
                 nightDiaThreshold={nightDiaThreshold}
                 highlightMap={highlightMap}
                 onCodeTap={handleRosterCellTap}
+                onEditTap={(name, row) =>
+                  setPersonEditModal({
+                    open: true,
+                    oldName: name,
+                    oldCode: tsvDiaToRouteCode(row?.dia),
+                  })
+                }
+                editMode={rosterEditMode}
+                displayName={displayName}
+                hasNameOverride={hasNameOverride}
                 selectedDepot={selectedDepot}
                 daySwipe={{
                   ref: swipeRosterP0.ref,
@@ -2601,6 +2853,16 @@ export default function App() {
                 nightDiaThreshold={nightDiaThreshold}
                 highlightMap={highlightMap}
                 onCodeTap={handleRosterCellTap}
+                onEditTap={(name, row) =>
+                  setPersonEditModal({
+                    open: true,
+                    oldName: name,
+                    oldCode: tsvDiaToRouteCode(row?.dia),
+                  })
+                }
+                editMode={rosterEditMode}
+                displayName={displayName}
+                hasNameOverride={hasNameOverride}
                 selectedDepot={selectedDepot}
                 daySwipe={{
                   ref: swipeRosterP0.ref,
@@ -2620,6 +2882,16 @@ export default function App() {
                 nightDiaThreshold={nightDiaThreshold}
                 highlightMap={highlightMap}
                 onCodeTap={handleRosterCellTap}
+                onEditTap={(name, row) =>
+                  setPersonEditModal({
+                    open: true,
+                    oldName: name,
+                    oldCode: tsvDiaToRouteCode(row?.dia),
+                  })
+                }
+                editMode={rosterEditMode}
+                displayName={displayName}
+                hasNameOverride={hasNameOverride}
                 selectedDepot={selectedDepot}
                 daySwipe={{
                   ref: swipeRosterP0.ref,
@@ -2847,21 +3119,43 @@ export default function App() {
                       ))}
                     </select>
                   </div>
-                  <button
-                    className="rounded-full px-3 py-1 text-sm bg-cyan-600 text-white"
-                    onClick={() =>
-                      setOrderMode((m) =>
-                        m === "person" ? "dia" : m === "dia" ? "name" : "person"
-                      )
-                    }
-                  >
-                    {orderMode === "person"
-                      ? "DIA 순서로 보기"
-                      : orderMode === "dia"
-                      ? "이름순으로 보기"
-                      : "순번으로 보기"}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      className={
+                        "rounded-full px-3 py-1 text-sm font-semibold transition " +
+                        (rosterEditMode
+                          ? "bg-amber-500 hover:bg-amber-400 text-gray-900"
+                          : "bg-gray-700 hover:bg-gray-600 text-gray-100")
+                      }
+                      onClick={() => setRosterEditMode((v) => !v)}
+                    >
+                      {rosterEditMode ? "✓ 완료" : "✏️ 수정"}
+                    </button>
+                    <button
+                      className="rounded-full px-3 py-1 text-sm bg-cyan-600 text-white"
+                      onClick={() =>
+                        setOrderMode((m) =>
+                          m === "person"
+                            ? "dia"
+                            : m === "dia"
+                            ? "name"
+                            : "person"
+                        )
+                      }
+                    >
+                      {orderMode === "person"
+                        ? "DIA 순서로 보기"
+                        : orderMode === "dia"
+                        ? "이름순으로 보기"
+                        : "순번으로 보기"}
+                    </button>
+                  </div>
                 </div>
+                {rosterEditMode && (
+                  <div className="mb-2 p-2 rounded-lg bg-amber-900/30 border border-amber-500/40 text-[11px] text-amber-200">
+                    🔧 이름 수정 모드 — 셀을 탭하면 이름 변경 창이 열립니다.
+                  </div>
+                )}
                 {orderMode === "person" && (
                   <RosterGrid
                     rows={rosterAt(selectedDate)}
@@ -2870,6 +3164,16 @@ export default function App() {
                     nightDiaThreshold={nightDiaThreshold}
                     highlightMap={highlightMap}
                     onCodeTap={handleRosterCellTap}
+                    onEditTap={(name, row) =>
+                      setPersonEditModal({
+                        open: true,
+                        oldName: name,
+                        oldCode: tsvDiaToRouteCode(row?.dia),
+                      })
+                    }
+                    editMode={rosterEditMode}
+                    displayName={displayName}
+                    hasNameOverride={hasNameOverride}
                     selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeRouteP1.ref,
@@ -2891,6 +3195,16 @@ export default function App() {
                     nightDiaThreshold={nightDiaThreshold}
                     highlightMap={highlightMap}
                     onCodeTap={handleRosterCellTap}
+                    onEditTap={(name, row) =>
+                      setPersonEditModal({
+                        open: true,
+                        oldName: name,
+                        oldCode: tsvDiaToRouteCode(row?.dia),
+                      })
+                    }
+                    editMode={rosterEditMode}
+                    displayName={displayName}
+                    hasNameOverride={hasNameOverride}
                     selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeRouteP1.ref,
@@ -2912,6 +3226,16 @@ export default function App() {
                     nightDiaThreshold={nightDiaThreshold}
                     highlightMap={highlightMap}
                     onCodeTap={handleRosterCellTap}
+                    onEditTap={(name, row) =>
+                      setPersonEditModal({
+                        open: true,
+                        oldName: name,
+                        oldCode: tsvDiaToRouteCode(row?.dia),
+                      })
+                    }
+                    editMode={rosterEditMode}
+                    displayName={displayName}
+                    hasNameOverride={hasNameOverride}
                     selectedDepot={selectedDepot}
                     daySwipe={{
                       ref: swipeRosterP0.ref,
@@ -3244,6 +3568,107 @@ export default function App() {
           />
         </div>
       )}
+
+      {/* ✅ 근무자 편집 모달 (이름 + 교번) */}
+      <PersonEditModal
+        open={personEditModal.open}
+        oldName={personEditModal.oldName}
+        oldCode={personEditModal.oldCode}
+        nameList={nameList}
+        codeList={currentGyobunList}
+        onClose={() =>
+          setPersonEditModal({ open: false, oldName: "", oldCode: "" })
+        }
+        onApply={async ({ newName, newCode }, scope) => {
+          const oldName = personEditModal.oldName;
+          // 영구 개명은 override 이름이 oldName→newName으로 이관되므로,
+          // 교번 override 대상은 최종 "영구 개명 후 이름"이어야 함
+          const targetName =
+            newName && scope === "permanent" ? newName : oldName;
+
+          // 1) 이름 변경
+          if (newName) {
+            if (scope === "today") {
+              applyTodayRename(oldName, newName, selectedDate);
+            } else {
+              await applyPermanentRename(oldName, newName);
+            }
+          }
+
+          // 2) 교번 변경
+          if (newCode) {
+            if (scope === "today") {
+              // 오늘 하루만: 기존대로 override 저장
+              setDayOverride(
+                selectedDepot,
+                targetName,
+                fmt(selectedDate),
+                newCode
+              );
+              setOverride(
+                selectedDepot,
+                stripTime(new Date(selectedDate)),
+                targetName,
+                newCode
+              );
+            } else {
+              // ♾️ 영구 교번 변경: commonMap.gyobun[idx] 교체
+              const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
+              const common = commonMap?.[key];
+              if (common?.names?.length && common?.gyobun?.length) {
+                const idx = common.names.findIndex(
+                  (n) =>
+                    (n || "").replace(/\s/g, "") ===
+                    (targetName || "").replace(/\s/g, "")
+                );
+                if (idx >= 0) {
+                  const newGyobun = [...common.gyobun];
+                  newGyobun[idx] = newCode;
+                  const nextMap = {
+                    ...commonMap,
+                    [key]: { ...common, gyobun: newGyobun },
+                  };
+                  setCommonMap(nextMap);
+                  try {
+                    await saveCommonDataToDB(nextMap);
+                  } catch {}
+
+                  // TSV 동기화 (교번은 보통 3번째 컬럼 — 실제 위치는 데이터 스키마에 맞게)
+                  setTablesByDepot((prev) => {
+                    const tsv = prev?.[selectedDepot];
+                    if (!tsv) return prev;
+                    const lines = tsv.split(/\r?\n/);
+                    if (lines.length > idx + 1) {
+                      const cols = lines[idx + 1].split("\t");
+                      if (cols.length >= 3) {
+                        cols[2] = newCode;
+                        lines[idx + 1] = cols.join("\t");
+                        return { ...prev, [selectedDepot]: lines.join("\n") };
+                      }
+                    }
+                    return prev;
+                  });
+
+                  // 오늘 날짜에 기존에 걸려있던 일시 override가 있으면 제거
+                  // (영구로 바뀐 마당에 하루 override가 남아있으면 혼란)
+                  setOverride(
+                    selectedDepot,
+                    stripTime(new Date(selectedDate)),
+                    targetName,
+                    null
+                  );
+                  setDayOverride(
+                    selectedDepot,
+                    targetName,
+                    fmt(selectedDate),
+                    null
+                  );
+                }
+              }
+            }
+          }
+        }}
+      />
     </div>
   );
 }
@@ -3258,6 +3683,10 @@ function RosterGrid({
   highlightMap,
   onPick,
   onCodeTap,
+  onEditTap, // 수정 모드에서 셀 탭시 (name, row) 전달
+  editMode = false, // 이름 수정 모드 on/off
+  displayName, // (name, date) => 표시 이름 (override 반영)
+  hasNameOverride, // (depot, date, name) => boolean
   daySwipe,
   selectedDepot,
   isOverridden,
@@ -3293,17 +3722,26 @@ function RosterGrid({
             }
           : {};
         const isSelected = selectedName === name;
+
+        // 표시할 이름 (override 적용)
+        const shownName = displayName ? displayName(name, date) : name;
+        const hasNameOv = !!hasNameOverride?.(selectedDepot, date, name);
+
         return (
           <button
             key={name}
             onClick={(e) => {
+              // 편집 모드면 PersonEditModal 열기 우선
+              if (editMode && onEditTap) {
+                onEditTap(name, row);
+                return;
+              }
               if (onCodeTap) {
                 // 전체탭/행로탭: 교번 변경 피커 열기
                 onCodeTap(name, row?.dia, selectedDepot);
-              } else {
-                // 홈탭: 기존 행로표 이동
+              } else if (onPick) {
+                // 홈탭: 기존 행로표 이동 (onPick 직접 호출)
                 setSelectedName(name);
-                if (window.setRouteTargetName) window.setRouteTargetName(name);
                 const btn = e.currentTarget;
                 btn.animate(
                   [
@@ -3327,25 +3765,30 @@ function RosterGrid({
                   { duration: 300, easing: "cubic-bezier(0.22,1,0.36,1)" }
                 );
                 setTimeout(() => {
-                  if (window.triggerRouteTransition)
-                    window.triggerRouteTransition();
+                  onPick(name);
                 }, 130);
               }
             }}
             className={
-              "aspect-square w-full rounded-lg p-1.5 text-left transition-all duration-200 " +
+              "aspect-square w-full rounded-lg p-1.5 text-left transition-all duration-200 relative " +
               (isSelected
                 ? "ring-4 ring-white/80 shadow-[0_0_10px_rgba(255,255,255,0.4)] "
+                : editMode
+                ? "bg-amber-900/40 hover:bg-amber-800/60 ring-1 ring-amber-500/60 "
                 : "bg-gray-700/80 hover:bg-gray-600 hover:shadow-[0_0_6px_rgba(255,255,255,0.3)]") +
               (isHighlighted ? " roster-person-colored" : "")
             }
             style={style}
-            title={`${name} • ${diaLabel} • ${t.combo}${
+            title={`${shownName} • ${diaLabel} • ${t.combo}${
               t.isNight ? " (야)" : ""
             }`}
           >
+            {editMode && (
+              <span className="absolute top-0.5 left-0.5 text-[9px]">✏️</span>
+            )}
             <div className="text-[11px] font-semibold whitespace-nowrap w-full text-center">
-              {name}
+              {hasNameOv ? "*" : ""}
+              {shownName}
             </div>
             <div className="text-[12px] font-extrabold text-gray-200 whitespace-nowrap">
               {diaLabel}

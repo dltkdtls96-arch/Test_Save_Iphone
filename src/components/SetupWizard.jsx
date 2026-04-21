@@ -155,15 +155,16 @@ export default function SetupWizard({
   // 오늘 날짜 기준 교번 목록 (전체 gyobun 그대로 — 사람이 "오늘 내 교번이 뭐야?" 선택)
   const gyobunList = depotData?.gyobun || [];
 
-  // ZIP 모드: 이름 선택 시 오늘 교번 자동 계산
+  // ZIP 모드: 이름 선택 시 오늘 교번 자동 계산 (기존 이름만)
   function handleNameSelect(name) {
     setMyName(name);
-    if (mode === "zip" && depotData) {
-      // info.txt 기준으로 오늘 교번 미리 계산해서 기본값으로 제안
+    if (mode === "zip" && depotData && nameList.includes(name)) {
+      // 기존 이름이면 info.txt 기준으로 오늘 교번 미리 계산해서 기본값 제안
       const today = todayStr();
       const code = getCodeForDate(depotData, name, today);
       setMyCode(code || "");
     } else {
+      // 새 이름이면 사용자가 직접 오늘 교번 선택해야 함
       setMyCode("");
     }
   }
@@ -177,10 +178,46 @@ export default function SetupWizard({
     let anchorDate = today;
 
     const key = DEPOT_TO_KEY[depot] || depot;
-    const data = (mode === "zip" ? commonMap : existingTsvData)?.[key];
+    let data = (mode === "zip" ? commonMap : existingTsvData)?.[key];
+    let effectiveCommonMap = commonMap;
 
     if (data?.gyobun?.length && data?.names?.length) {
       const len = data.names.length;
+      const isNewName =
+        mode === "zip" && myName && !data.names.includes(myName);
+
+      // ⚡ 새 이름 처리: 사용자가 선택한 myCode 위치에 이 이름을 "주입"
+      //   (원래 그 자리 사람의 이름을 새 이름으로 덮어씀)
+      //   → 주입 후 일반 공식대로 anchor 계산됨
+      if (isNewName) {
+        const codeIdx = data.gyobun.findIndex(
+          (c) => c.trim().toLowerCase() === myCode.trim().toLowerCase()
+        );
+        if (codeIdx >= 0) {
+          // 오늘 codeIdx 위치의 사람을 myName으로 교체
+          // 오늘 공식: nameIdx = mod(codeIdx - dd, len). 근데 우리는 "새 이름이
+          // 오늘 myCode를 받도록" 만들려면 → 오늘 해당하는 위치를 찾아 이름 치환
+          // info.txt 기준 offset: baseName → baseCode 관계 그대로 유지
+          // 오늘 myCode를 받는 name의 위치 = mod(codeIdx - dd0, len) where dd0 = today - baseDate
+          // 간단히: getCodeForDate로 "오늘 그 코드를 받는" 사람 이름 찾아서 교체
+          let targetIdx = -1;
+          for (let i = 0; i < len; i++) {
+            const n = data.names[i];
+            const c = getCodeForDate(data, n, today);
+            if (c && c.trim().toLowerCase() === myCode.trim().toLowerCase()) {
+              targetIdx = i;
+              break;
+            }
+          }
+          if (targetIdx >= 0) {
+            const newNames = [...data.names];
+            newNames[targetIdx] = myName;
+            data = { ...data, names: newNames };
+            effectiveCommonMap = { ...commonMap, [key]: data };
+          }
+        }
+      }
+
       const nameIdx = data.names.findIndex(
         (n) => n.replace(/\s/g, "") === myName.replace(/\s/g, "")
       );
@@ -210,7 +247,7 @@ export default function SetupWizard({
 
     const finalCommonMap =
       mode === "zip"
-        ? commonMap
+        ? effectiveCommonMap
         : { ...(existingTsvData || {}), _pathsOnly: pathCommonMap };
 
     onComplete({
@@ -485,19 +522,29 @@ export default function SetupWizard({
               <div className="mb-4">
                 <label className="text-xs text-gray-400 mb-1 block">
                   내 이름
+                  <span className="ml-2 text-[10px] text-gray-500">
+                    (목록에서 선택하거나 직접 입력)
+                  </span>
                 </label>
-                <select
+                <input
+                  list="wizard-namelist"
                   className="w-full bg-gray-700 rounded-xl px-3 py-2 text-sm"
+                  placeholder="이름 입력..."
                   value={myName}
                   onChange={(e) => handleNameSelect(e.target.value)}
-                >
-                  <option value="">(이름 선택)</option>
+                />
+                <datalist id="wizard-namelist">
                   {nameList.map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
+                    <option key={n} value={n} />
                   ))}
-                </select>
+                </datalist>
+                {myName && !nameList.includes(myName) && (
+                  <div className="mt-1.5 p-2 rounded-lg bg-emerald-900/30 border border-emerald-500/40 text-[11px] text-emerald-200">
+                    💡 "<b>{myName}</b>"는 새 이름입니다. 목록에 있는 사람 중
+                    누구의 자리를 대체할지 "오늘 교번"을 선택하면 자동
+                    반영됩니다.
+                  </div>
+                )}
               </div>
             )}
 
