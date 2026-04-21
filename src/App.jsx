@@ -16,10 +16,8 @@ import {
   DEPOT_TO_ZIP_KEY,
 } from "./dataEngine";
 import SetupWizard from "./components/SetupWizard";
-import QuickCodePicker from "./components/QuickCodePicker";
 import PersonEditModal from "./components/PersonEditModal";
 import { RouteImageView, tsvDiaToRouteCode } from "./components/routeImage";
-import { useDayOverrides } from "./hooks/useDayOverrides";
 
 const SettingsView = React.lazy(() => import("./SettingsView"));
 
@@ -589,15 +587,9 @@ export default function App() {
     name: null,
   });
 
-  // ── 새 추가: commonMap, SetupWizard, QuickCodePicker ──
+  // ── 새 추가: commonMap, SetupWizard ──
   const [commonMap, setCommonMap] = useState(null);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
-  const [pickerState, setPickerState] = useState({
-    open: false,
-    name: "",
-    currentCode: "",
-    depot: "",
-  });
 
   // ── 근무자 편집 모달 (이름 + 교번 동시) ──
   const [personEditModal, setPersonEditModal] = useState({
@@ -609,12 +601,6 @@ export default function App() {
 
   // 이름 override (오늘 하루만): { depot: { iso: { oldName: newName } } }
   const [nameOverridesByDepot, setNameOverridesByDepot] = useState({});
-
-  const {
-    setOverride: setDayOverride,
-    resetOverride: resetDayOverride,
-    hasOverride: hasDayOverride,
-  } = useDayOverrides();
 
   function setOverride(depot, dateObj, name, value) {
     const iso = fmt(stripTime(new Date(dateObj)));
@@ -632,7 +618,7 @@ export default function App() {
     const vRaw = overridesByDepot?.[depot]?.[iso]?.[name];
     if (vRaw == null || vRaw === "") return row;
 
-    // 값 정규화: 공백 제거 + 숫자 뒤 d/D 모두 허용
+    // 값 정규화: 공백 제거
     const v = String(vRaw).replace(/\s+/g, "");
 
     const patched = { ...(row || {}) };
@@ -643,7 +629,7 @@ export default function App() {
       patched.holiday = { ...tpl.holiday };
     };
 
-    // 1) 휴/비번/교육/휴가
+    // 1) 휴/비번/비/교육/휴가
     if (
       v === "휴" ||
       v === "비번" ||
@@ -664,7 +650,7 @@ export default function App() {
       return patched;
     }
 
-    // 3) 대기N  (먼저 검사 — 대N 정규식에 걸리지 않도록)
+    // 3) 대기N (대N 정규식에 걸리기 전 먼저 검사)
     if (/^대기\d+$/.test(v)) {
       patched.dia = v;
       applyTemplate(labelTemplates[v]);
@@ -680,7 +666,7 @@ export default function App() {
       return patched;
     }
 
-    // 5) 숫자 + d/D  ("1d", "12D", "5d" 모두 허용)
+    // 5) 숫자 + d/D  (소문자 "1d", 대문자 "1D" 모두 허용)
     if (/^\d+[dD]$/.test(v)) {
       const n = Number(v.replace(/[dD]$/, ""));
       if (Number.isFinite(n)) {
@@ -737,7 +723,7 @@ export default function App() {
     return !!nameOverridesByDepot?.[depot]?.[iso]?.[name];
   }
 
-  // 영구 개명: commonMap.names[idx] = newName + 관련 override 이관
+  // 영구 개명: commonMap.names[idx] = newName
   async function applyPermanentRename(oldName, newName) {
     if (!oldName || !newName || oldName === newName) return;
     const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
@@ -773,7 +759,7 @@ export default function App() {
     });
 
     // ── override 이관 (oldName → newName) ──
-    // 1) 교번 override
+    // 1) 교번 override: 이름 키를 newName으로 이관
     setOverridesByDepot((prev) => {
       const depotMap = prev?.[selectedDepot];
       if (!depotMap) return prev;
@@ -792,7 +778,7 @@ export default function App() {
       return changed ? { ...prev, [selectedDepot]: nextDepotMap } : prev;
     });
 
-    // 2) 이름 override (혹시 oldName 키로 남아있을 수 있음)
+    // 2) 이름 override: oldName 키 제거 (이미 영구 개명됐으므로 불필요)
     setNameOverridesByDepot((prev) => {
       const depotMap = prev?.[selectedDepot];
       if (!depotMap) return prev;
@@ -802,7 +788,6 @@ export default function App() {
         const dayMap = nextDepotMap[iso];
         if (dayMap && Object.prototype.hasOwnProperty.call(dayMap, oldName)) {
           const nextDay = { ...dayMap };
-          // oldName에 달려있던 override는 이제 불필요 (이미 영구 개명됐으므로)
           delete nextDay[oldName];
           if (Object.keys(nextDay).length === 0) delete nextDepotMap[iso];
           else nextDepotMap[iso] = nextDay;
@@ -812,7 +797,7 @@ export default function App() {
       return changed ? { ...prev, [selectedDepot]: nextDepotMap } : prev;
     });
 
-    // 내 이름/행로 대상 연동
+    // 내 이름이면 연동
     if (myName === oldName) setMyNameForDepot(selectedDepot, newName);
     if (routeTargetName === oldName) setRouteTargetName(newName);
   }
@@ -2052,15 +2037,19 @@ export default function App() {
   const currentPaths = currentCommonData?.paths || {};
   const routeCodeStr = tsvDiaToRouteCode(routeRow?.dia);
 
-  // 전체탭 셀 탭 → QuickCodePicker 열기
-  const handleRosterCellTap = (name, rowDia, depotArg) => {
-    setPickerState({
-      open: true,
-      name,
-      currentCode: tsvDiaToRouteCode(rowDia),
-      depot: depotArg || selectedDepot,
-    });
-  };
+  // 각 교번을 "지금" 소유한 사람 맵 — PersonEditModal swap 미리보기용
+  // (anchor=today, dd=0 이므로 names[i] 의 교번 = gyobun[i])
+  const codeOwnerMap = React.useMemo(() => {
+    const map = {};
+    const names = currentCommonData?.names || [];
+    const gyobun = currentCommonData?.gyobun || [];
+    const len = Math.min(names.length, gyobun.length);
+    for (let i = 0; i < len; i++) {
+      const code = gyobun[i];
+      if (code) map[code] = names[i] || "";
+    }
+    return map;
+  }, [currentCommonData]);
 
   const routeTargetPhone = React.useMemo(() => {
     const p =
@@ -2823,7 +2812,12 @@ export default function App() {
                 date={selectedDate}
                 nightDiaThreshold={nightDiaThreshold}
                 highlightMap={highlightMap}
-                onCodeTap={handleRosterCellTap}
+                onPick={(name) => {
+                  setRouteTargetName(name);
+                  if (window.triggerRouteTransition)
+                    window.triggerRouteTransition();
+                  else setSelectedTab("route");
+                }}
                 onEditTap={(name, row) =>
                   setPersonEditModal({
                     open: true,
@@ -2852,7 +2846,12 @@ export default function App() {
                 date={selectedDate}
                 nightDiaThreshold={nightDiaThreshold}
                 highlightMap={highlightMap}
-                onCodeTap={handleRosterCellTap}
+                onPick={(name) => {
+                  setRouteTargetName(name);
+                  if (window.triggerRouteTransition)
+                    window.triggerRouteTransition();
+                  else setSelectedTab("route");
+                }}
                 onEditTap={(name, row) =>
                   setPersonEditModal({
                     open: true,
@@ -2881,7 +2880,12 @@ export default function App() {
                 date={selectedDate}
                 nightDiaThreshold={nightDiaThreshold}
                 highlightMap={highlightMap}
-                onCodeTap={handleRosterCellTap}
+                onPick={(name) => {
+                  setRouteTargetName(name);
+                  if (window.triggerRouteTransition)
+                    window.triggerRouteTransition();
+                  else setSelectedTab("route");
+                }}
                 onEditTap={(name, row) =>
                   setPersonEditModal({
                     open: true,
@@ -3163,7 +3167,12 @@ export default function App() {
                     date={selectedDate}
                     nightDiaThreshold={nightDiaThreshold}
                     highlightMap={highlightMap}
-                    onCodeTap={handleRosterCellTap}
+                    onPick={(name) => {
+                      setRouteTargetName(name);
+                      if (window.triggerRouteTransition)
+                        window.triggerRouteTransition();
+                      else setSelectedTab("route");
+                    }}
                     onEditTap={(name, row) =>
                       setPersonEditModal({
                         open: true,
@@ -3194,7 +3203,12 @@ export default function App() {
                     date={selectedDate}
                     nightDiaThreshold={nightDiaThreshold}
                     highlightMap={highlightMap}
-                    onCodeTap={handleRosterCellTap}
+                    onPick={(name) => {
+                      setRouteTargetName(name);
+                      if (window.triggerRouteTransition)
+                        window.triggerRouteTransition();
+                      else setSelectedTab("route");
+                    }}
                     onEditTap={(name, row) =>
                       setPersonEditModal({
                         open: true,
@@ -3225,7 +3239,12 @@ export default function App() {
                     date={selectedDate}
                     nightDiaThreshold={nightDiaThreshold}
                     highlightMap={highlightMap}
-                    onCodeTap={handleRosterCellTap}
+                    onPick={(name) => {
+                      setRouteTargetName(name);
+                      if (window.triggerRouteTransition)
+                        window.triggerRouteTransition();
+                      else setSelectedTab("route");
+                    }}
                     onEditTap={(name, row) =>
                       setPersonEditModal({
                         open: true,
@@ -3514,50 +3533,6 @@ export default function App() {
 
       <DutyModal />
 
-      {/* ✅ QuickCodePicker — 전체/행로탭 교번 즉시 변경 */}
-      <QuickCodePicker
-        open={pickerState.open}
-        onClose={() => setPickerState((p) => ({ ...p, open: false }))}
-        name={pickerState.name}
-        depot={pickerState.depot || selectedDepot}
-        currentCode={pickerState.currentCode}
-        gyobunList={currentGyobunList}
-        date={fmt(selectedDate)}
-        isOverridden={hasDayOverride(
-          pickerState.depot || selectedDepot,
-          pickerState.name,
-          fmt(selectedDate)
-        )}
-        onSelect={(code) => {
-          setDayOverride(
-            pickerState.depot || selectedDepot,
-            pickerState.name,
-            fmt(selectedDate),
-            code
-          );
-          setOverride(
-            pickerState.depot || selectedDepot,
-            stripTime(new Date(selectedDate)),
-            pickerState.name,
-            code
-          );
-          setPickerState((p) => ({ ...p, open: false }));
-        }}
-        onReset={() => {
-          resetDayOverride(
-            pickerState.depot || selectedDepot,
-            pickerState.name,
-            fmt(selectedDate)
-          );
-          setOverride(
-            pickerState.depot || selectedDepot,
-            stripTime(new Date(selectedDate)),
-            pickerState.name,
-            null
-          );
-        }}
-      />
-
       {/* ✅ SetupWizard — ZIP/TSV 초기설정 */}
       {showSetupWizard && (
         <div className="fixed inset-0 z-[99999] bg-gray-900 overflow-y-auto">
@@ -3576,13 +3551,14 @@ export default function App() {
         oldCode={personEditModal.oldCode}
         nameList={nameList}
         codeList={currentGyobunList}
+        codeOwnerMap={codeOwnerMap}
         onClose={() =>
           setPersonEditModal({ open: false, oldName: "", oldCode: "" })
         }
         onApply={async ({ newName, newCode }, scope) => {
           const oldName = personEditModal.oldName;
-          // 영구 개명은 override 이름이 oldName→newName으로 이관되므로,
-          // 교번 override 대상은 최종 "영구 개명 후 이름"이어야 함
+          // 영구 개명 시 oldName→newName 이관이 일어나므로,
+          // 교번 override 대상 이름은 "영구 개명 후 이름"으로 잡는다.
           const targetName =
             newName && scope === "permanent" ? newName : oldName;
 
@@ -3598,13 +3574,7 @@ export default function App() {
           // 2) 교번 변경
           if (newCode) {
             if (scope === "today") {
-              // 오늘 하루만: 기존대로 override 저장
-              setDayOverride(
-                selectedDepot,
-                targetName,
-                fmt(selectedDate),
-                newCode
-              );
+              // 오늘 하루만 — overridesByDepot에 저장
               setOverride(
                 selectedDepot,
                 stripTime(new Date(selectedDate)),
@@ -3612,57 +3582,109 @@ export default function App() {
                 newCode
               );
             } else {
-              // ♾️ 영구 교번 변경: commonMap.gyobun[idx] 교체
+              // 영구 교번 변경 — names 배열 swap 방식
+              //
+              // 원리:
+              //   gyobun[] 배열은 위치 고정 (각 index = 특정 교번).
+              //   anchor=today, dd=0 이므로 오늘 names[i] 의 교번 = gyobun[i].
+              //   따라서 "김철수를 7번 교번으로" = names 배열에서
+              //   김철수가 있던 idx와 gyobun[j]=="7d" 인 j 의 이름을 swap.
               const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
               const common = commonMap?.[key];
               if (common?.names?.length && common?.gyobun?.length) {
-                const idx = common.names.findIndex(
-                  (n) =>
-                    (n || "").replace(/\s/g, "") ===
-                    (targetName || "").replace(/\s/g, "")
+                const norm = (s) => String(s || "").replace(/\s/g, "");
+                const srcIdx = common.names.findIndex(
+                  (n) => norm(n) === norm(targetName)
                 );
-                if (idx >= 0) {
-                  const newGyobun = [...common.gyobun];
-                  newGyobun[idx] = newCode;
+                // newCode 가 위치한 index 찾기 (대소문자 무시)
+                const normCode = (c) =>
+                  String(c || "")
+                    .toLowerCase()
+                    .replace(/\s/g, "");
+                const targetCodeIdx = common.gyobun.findIndex(
+                  (c) => normCode(c) === normCode(newCode)
+                );
+
+                if (srcIdx < 0 || targetCodeIdx < 0) {
+                  // 못 찾으면 그냥 리턴
+                } else if (srcIdx === targetCodeIdx) {
+                  // 이미 그 자리 — 할 일 없음
+                } else {
+                  const swapName = common.names[targetCodeIdx];
+                  // 빈자리(이름 없음)면 확인 없이 진행
+                  const needConfirm = !!(swapName && swapName.trim());
+                  const ok = needConfirm
+                    ? window.confirm(
+                        `"${targetName}"을(를) 교번 ${newCode} 자리로 옮기면\n` +
+                          `현재 그 자리에 있는 "${swapName}"은(는) ` +
+                          `교번 ${common.gyobun[srcIdx]} 자리로 이동합니다.\n\n` +
+                          `두 사람의 자리를 서로 바꾸시겠습니까?`
+                      )
+                    : true;
+                  if (!ok) return;
+
+                  // names swap
+                  const newNames = [...common.names];
+                  newNames[srcIdx] = swapName;
+                  newNames[targetCodeIdx] = targetName;
+
+                  // phones 도 함께 swap
+                  const oldPhones = common.phones || [];
+                  const newPhones = [...oldPhones];
+                  if (oldPhones.length === common.names.length) {
+                    newPhones[srcIdx] = oldPhones[targetCodeIdx] || "";
+                    newPhones[targetCodeIdx] = oldPhones[srcIdx] || "";
+                  }
+
                   const nextMap = {
                     ...commonMap,
-                    [key]: { ...common, gyobun: newGyobun },
+                    [key]: { ...common, names: newNames, phones: newPhones },
                   };
                   setCommonMap(nextMap);
                   try {
                     await saveCommonDataToDB(nextMap);
                   } catch {}
 
-                  // TSV 동기화 (교번은 보통 3번째 컬럼 — 실제 위치는 데이터 스키마에 맞게)
+                  // TSV 동기화 — 이름 컬럼(cols[1])만 swap (gyobun=dia 컬럼은 그대로)
                   setTablesByDepot((prev) => {
                     const tsv = prev?.[selectedDepot];
                     if (!tsv) return prev;
                     const lines = tsv.split(/\r?\n/);
-                    if (lines.length > idx + 1) {
-                      const cols = lines[idx + 1].split("\t");
-                      if (cols.length >= 3) {
-                        cols[2] = newCode;
-                        lines[idx + 1] = cols.join("\t");
-                        return { ...prev, [selectedDepot]: lines.join("\n") };
+                    const aLine = srcIdx + 1;
+                    const bLine = targetCodeIdx + 1;
+                    if (lines.length > Math.max(aLine, bLine)) {
+                      const aCols = lines[aLine].split("\t");
+                      const bCols = lines[bLine].split("\t");
+                      if (aCols.length >= 2 && bCols.length >= 2) {
+                        const tmp = aCols[1];
+                        aCols[1] = bCols[1];
+                        bCols[1] = tmp;
+                        lines[aLine] = aCols.join("\t");
+                        lines[bLine] = bCols.join("\t");
+                        return {
+                          ...prev,
+                          [selectedDepot]: lines.join("\n"),
+                        };
                       }
                     }
                     return prev;
                   });
 
-                  // 오늘 날짜에 기존에 걸려있던 일시 override가 있으면 제거
-                  // (영구로 바뀐 마당에 하루 override가 남아있으면 혼란)
+                  // 해당 날짜에 걸려있던 일시 override는 swap된 두 이름 모두 해제
                   setOverride(
                     selectedDepot,
                     stripTime(new Date(selectedDate)),
                     targetName,
                     null
                   );
-                  setDayOverride(
-                    selectedDepot,
-                    targetName,
-                    fmt(selectedDate),
-                    null
-                  );
+                  if (swapName) {
+                    setOverride(
+                      selectedDepot,
+                      stripTime(new Date(selectedDate)),
+                      swapName,
+                      null
+                    );
+                  }
                 }
               }
             }
