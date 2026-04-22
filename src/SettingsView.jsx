@@ -87,20 +87,6 @@ export default function SettingsView(props) {
   // TSV 등록 펼침
   const [tsvOpen, setTsvOpen] = React.useState(false);
 
-  React.useEffect(() => {
-    if (!selectedDepot) return;
-    const defaultNightDiaByDepot = {
-      안심: 25,
-      월배: 25,
-      문양: 24,
-      경산: 21,
-      교대: 21,
-    };
-    const defaultNightDia = defaultNightDiaByDepot[selectedDepot];
-    if (defaultNightDia && nightDiaByDepot?.[selectedDepot] !== defaultNightDia)
-      setNightDiaForDepot(selectedDepot, defaultNightDia);
-  }, [selectedDepot]);
-
   const normalizeHolidays = (text) => {
     const set = new Set(
       (text || "")
@@ -109,11 +95,6 @@ export default function SettingsView(props) {
         .filter(Boolean)
     );
     return [...set].sort().join("\n");
-  };
-
-  const applyNightRuleToAll = () => {
-    const val = nightDiaByDepot?.[selectedDepot] ?? 25;
-    for (const d of DEPOTS) setNightDiaForDepot(d, val);
   };
 
   // ─────────────────────────────────────────
@@ -454,19 +435,26 @@ export default function SettingsView(props) {
                       ? String(row.dia)
                       : String(row.dia);
 
-                  // 교번 색상
+                  // 교번 색상 (worktime 기반 — threshold 폐기)
+                  //  오늘 weekday.out 이 비어있으면 야간, 비어있지 않고 숫자 dia 이면 주간
+                  //  ~ 로 끝나는 비번 자리, 휴/비 라벨은 회색
                   let diaColor = "text-gray-300";
-                  if (typeof row?.dia === "number") {
-                    const nightStart = nightDiaByDepot?.[selectedDepot] ?? 25;
-                    diaColor =
-                      row.dia >= nightStart
-                        ? "text-sky-300"
-                        : "text-yellow-300";
-                  } else if (typeof row?.dia === "string") {
-                    const s = row.dia.replace(/\s/g, "");
-                    if (s.startsWith("휴") || s.includes("비"))
+                  const diaStr = String(row?.dia || "").replace(/\s/g, "");
+                  if (typeof row?.dia === "string") {
+                    if (diaStr.startsWith("휴") || diaStr.includes("비"))
                       diaColor = "text-gray-400";
-                    else if (s.startsWith("대")) diaColor = "text-purple-300";
+                    else if (diaStr.endsWith("~")) diaColor = "text-gray-400";
+                    else if (diaStr.startsWith("대")) {
+                      const outEmpty = !row?.weekday?.out;
+                      diaColor = outEmpty ? "text-sky-300" : "text-purple-300";
+                    } else if (diaStr === "야") diaColor = "text-sky-300";
+                    else if (diaStr === "주") diaColor = "text-yellow-300";
+                  } else if (typeof row?.dia === "number") {
+                    const outEmpty = !row?.weekday?.out;
+                    const inEmpty = !row?.weekday?.in;
+                    if (inEmpty && !outEmpty) diaColor = "text-gray-400"; // 비번 자리
+                    else if (outEmpty) diaColor = "text-sky-300"; // 야간
+                    else diaColor = "text-yellow-300"; // 주간
                   }
 
                   return (
@@ -706,35 +694,6 @@ export default function SettingsView(props) {
               </div>
             </div>
 
-            {/* 야간 규칙 */}
-            <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
-              <div className="font-semibold mb-1">
-                야간 규칙 ({selectedDepot || "소속 미선택"})
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span>야간 기준 dia ≥</span>
-                <input
-                  type="number"
-                  min={1}
-                  className="w-20 bg-gray-700 rounded-xl px-2 py-1 text-sm"
-                  value={nightDiaByDepot?.[selectedDepot] ?? 25}
-                  onChange={(e) =>
-                    setNightDiaForDepot(
-                      selectedDepot,
-                      Math.max(1, Number(e.target.value) || 1)
-                    )
-                  }
-                />
-                <span>( 안심/월배=25, 문양=24, 경산=21 )</span>
-              </div>
-              <button
-                className="mt-2 px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs"
-                onClick={applyNightRuleToAll}
-              >
-                현재 값 모든 소속에 적용
-              </button>
-            </div>
-
             {/* 행로표 이미지 배율 */}
             <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
               <div className="font-semibold mb-2">
@@ -851,76 +810,196 @@ export default function SettingsView(props) {
           </div>
         </section>
 
-        {/* TSV 고급편집 (기본 접힘) */}
-        <section className="rounded-2xl bg-gray-900/60 border border-gray-700/40 overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setTsvOpen((v) => !v)}
-            className="w-full px-4 py-3 flex items-center justify-between text-sm hover:bg-gray-800/50 transition"
-          >
-            <span className="font-semibold text-gray-200">
-              📄 TSV 고급편집 {tsvOpen ? "▼" : "▶"}
+        {/* TSV 고급편집 (교대·교대(외) 전용 — ZIP 기지는 노출 안 함) */}
+        {(selectedDepot === "교대" || selectedDepot === "교대(외)") && (
+          <TsvEditorSection
+            selectedDepot={selectedDepot}
+            currentTableText={currentTableText}
+            setTablesByDepot={setTablesByDepot}
+            buildGyodaeTable={buildGyodaeTable}
+            onUpload={onUpload}
+            tsvOpen={tsvOpen}
+            setTsvOpen={setTsvOpen}
+          />
+        )}
+        {!(selectedDepot === "교대" || selectedDepot === "교대(외)") && (
+          <section className="rounded-2xl bg-gray-900/60 border border-gray-700/40 px-4 py-3 text-[12px] text-gray-400">
+            <span className="font-semibold text-gray-300">📄 TSV 고급편집</span>
+            <span className="ml-2 text-[11px]">
+              교대 / 교대(외) 에서만 사용 가능합니다.
             </span>
-            <span className="text-[11px] text-gray-500">
-              교대·교대(외) 편집용
-            </span>
-          </button>
-          {tsvOpen && (
-            <div className="p-4 border-t border-gray-700/50">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-sm text-gray-300">
-                  다이아 표 (업로드/편집)
-                </div>
-                <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 cursor-pointer text-xs">
-                  <Upload className="w-3.5 h-3.5" />
-                  CSV/TSV
-                  <input
-                    type="file"
-                    accept=".csv,.tsv,.txt"
-                    className="hidden"
-                    onChange={onUpload}
-                  />
-                </label>
-              </div>
-
-              {selectedDepot === "교대" && buildGyodaeTable && (
-                <div className="mb-2">
-                  <button
-                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white"
-                    onClick={() =>
-                      setTablesByDepot((prev) => ({
-                        ...(prev || {}),
-                        [selectedDepot]: buildGyodaeTable(),
-                      }))
-                    }
-                  >
-                    교대 21일 순환표로 채우기
-                  </button>
-                </div>
-              )}
-
-              <div className="text-xs text-gray-400 mb-1">
-                헤더:
-                순번,이름,dia,평일출근,평일퇴근,토요일출근,토요일퇴근,휴일출근,휴일퇴근
-              </div>
-              <textarea
-                className="w-full bg-gray-900 rounded-xl p-3 font-mono text-[10px] whitespace-pre overflow-x-auto resize-none"
-                rows={Math.max(
-                  10,
-                  (currentTableText || "").split("\n").length + 2
-                )}
-                value={currentTableText || ""}
-                onChange={(e) =>
-                  setTablesByDepot((prev) => ({
-                    ...(prev || {}),
-                    [selectedDepot]: e.target.value,
-                  }))
-                }
-              />
+            <div className="mt-1 text-[11px] text-gray-500 leading-relaxed">
+              ZIP 기지(안심/월배/경산/문양)는 위의 "인원 편집" 섹션에서 이름과
+              전화번호를 수정하세요. 교번 자리 바꾸기는 전체 교번 화면의 수정
+              모드(✏️)에서 셀을 눌러 진행합니다.
             </div>
-          )}
-        </section>
+          </section>
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * TsvEditorSection
+ * ──────────────────────────────────────────────
+ * 교대 / 교대(외) 용 TSV 편집기.
+ *
+ * 핵심 설계:
+ *  - textarea 의 값은 **로컬 draft state** 로 관리 — 외부 tablesByDepot 가
+ *    편집 도중 자동 갱신되더라도 커서/입력이 방해받지 않음.
+ *  - "적용" 버튼을 눌러야만 setTablesByDepot 가 호출되어 commonMap 에 반영됨.
+ *  - 외부 currentTableText 가 변하면 dirty 가 아닐 때만 draft 에 반영.
+ *  - 소속을 바꾸면 draft 도 해당 소속 값으로 초기화.
+ */
+function TsvEditorSection({
+  selectedDepot,
+  currentTableText,
+  setTablesByDepot,
+  buildGyodaeTable,
+  onUpload,
+  tsvOpen,
+  setTsvOpen,
+}) {
+  const [draft, setDraft] = React.useState(currentTableText || "");
+  const [dirty, setDirty] = React.useState(false);
+
+  // 소속 변경 시 draft 동기화 (dirty 여부 무시 — 소속이 바뀌면 의미가 달라짐)
+  React.useEffect(() => {
+    setDraft(currentTableText || "");
+    setDirty(false);
+    // selectedDepot 이 실제로 바뀌었을 때만 의미 있음
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDepot]);
+
+  // dirty 가 아닌 상태에서 외부가 바뀌면 draft 에 반영 (자동 회전 등)
+  React.useEffect(() => {
+    if (dirty) return;
+    setDraft(currentTableText || "");
+  }, [currentTableText, dirty]);
+
+  const onDraftChange = (v) => {
+    setDraft(v);
+    if (v !== (currentTableText || "")) setDirty(true);
+    else setDirty(false);
+  };
+
+  const apply = () => {
+    setTablesByDepot((prev) => ({ ...(prev || {}), [selectedDepot]: draft }));
+    setDirty(false);
+  };
+
+  const discard = () => {
+    setDraft(currentTableText || "");
+    setDirty(false);
+  };
+
+  // CSV/TSV 업로드 — 파일 내용을 draft 에 넣고 dirty 로 표시 (즉시 적용 안 함)
+  const handleFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try {
+      const text = await f.text();
+      setDraft(text);
+      setDirty(true);
+    } catch {}
+    e.target.value = "";
+  };
+
+  return (
+    <section className="rounded-2xl bg-gray-900/60 border border-gray-700/40 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setTsvOpen((v) => !v)}
+        className="w-full px-4 py-3 flex items-center justify-between text-sm hover:bg-gray-800/50 transition"
+      >
+        <span className="font-semibold text-gray-200">
+          📄 TSV 고급편집 {tsvOpen ? "▼" : "▶"}
+        </span>
+        <span className="text-[11px] text-gray-500">
+          {selectedDepot} 편집용 {dirty ? "· 미저장 변경 있음" : ""}
+        </span>
+      </button>
+      {tsvOpen && (
+        <div className="p-4 border-t border-gray-700/50">
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+            <div className="text-sm text-gray-300">다이아 표 (업로드/편집)</div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-700 hover:bg-gray-600 cursor-pointer text-xs">
+                <Upload className="w-3.5 h-3.5" />
+                CSV/TSV
+                <input
+                  type="file"
+                  accept=".csv,.tsv,.txt"
+                  className="hidden"
+                  onChange={handleFile}
+                />
+              </label>
+            </div>
+          </div>
+
+          {selectedDepot === "교대" && buildGyodaeTable && (
+            <div className="mb-2">
+              <button
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs text-white"
+                onClick={() => {
+                  setDraft(buildGyodaeTable());
+                  setDirty(true);
+                }}
+              >
+                교대 21일 순환표로 채우기
+              </button>
+            </div>
+          )}
+
+          <div className="text-xs text-gray-400 mb-1">
+            헤더:
+            순번,이름,dia,평일출근,평일퇴근,토요일출근,토요일퇴근,휴일출근,휴일퇴근
+          </div>
+          <textarea
+            className={
+              "w-full bg-gray-900 rounded-xl p-3 font-mono text-[10px] whitespace-pre overflow-x-auto resize-none outline-none " +
+              (dirty
+                ? "ring-2 ring-amber-500/60"
+                : "ring-1 ring-gray-700/60 focus:ring-2 focus:ring-cyan-500")
+            }
+            rows={Math.max(10, (draft || "").split("\n").length + 2)}
+            value={draft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            spellCheck={false}
+          />
+
+          <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+            <div className="text-[11px] text-gray-400">
+              {dirty ? (
+                <span className="text-amber-300">
+                  ⚠ 변경사항이 아직 반영되지 않았습니다 — 적용을 눌러주세요
+                </span>
+              ) : (
+                <span>편집 후 "적용" 을 눌러야 캘린더/교번에 반영됩니다</span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                disabled={!dirty}
+                onClick={discard}
+                className="px-3 py-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-xs text-gray-100"
+              >
+                되돌리기
+              </button>
+              <button
+                type="button"
+                disabled={!dirty}
+                onClick={apply}
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-xs text-white font-semibold"
+              >
+                적용
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

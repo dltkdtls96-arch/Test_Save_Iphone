@@ -376,7 +376,36 @@ function buildNameIndexMap(rows) {
   return m;
 }
 
-function computeInOut(row, date, holidaySet, nightDiaThreshold) {
+// ─────────────────────────────────────────────
+//  야간 판정 — worktime 기반 (threshold 폐기)
+//
+//  원칙:
+//   • row.weekday/saturday/holiday 의 out 이 비어있으면 → 야간 출근
+//   • row.*.in 이 비어있으면 → 야간에서 이어진 비번 자리 ("N~")
+//   • 야간일 때 실제 퇴근 시간은 row.weekdayNext/saturdayNext/holidayNext
+//     (= 다음 자리 교번의 worktime.out)
+//
+//  교대/교대(외) (TSV 기반) 는 dia 가 "주"/"야"/"비"/"휴" 라벨이라
+//  아래 라벨 분기에서 먼저 처리됨 — worktime 자동 판정 대상 아님.
+// ─────────────────────────────────────────────
+function getDaySrc(row, date, holidaySet) {
+  const tType = getDayType(date, holidaySet);
+  const src =
+    tType === "평"
+      ? row.weekday
+      : tType === "토"
+      ? row.saturday
+      : row.holiday;
+  const next =
+    tType === "평"
+      ? row.weekdayNext
+      : tType === "토"
+      ? row.saturdayNext
+      : row.holidayNext;
+  return { tType, src: src || { in: "", out: "" }, next: next || null };
+}
+
+function computeInOut(row, date, holidaySet /* , nightDiaThreshold (무시) */) {
   if (!row)
     return {
       in: "-",
@@ -385,76 +414,80 @@ function computeInOut(row, date, holidaySet, nightDiaThreshold) {
       combo: "-",
       isNight: false,
     };
+
+  // ── 라벨 기반 (교대/교대(외) TSV) ──
   if (typeof row.dia === "string") {
     const label = row.dia;
-    if (label.includes("비번"))
+    const clean = label.replace(/\s/g, "");
+    if (clean.includes("비번") || clean === "비")
       return { in: "-", out: "-", note: "비번", combo: "-", isNight: false };
-    if (label.replace(/\s/g, "").startsWith("휴"))
+    if (clean.startsWith("휴"))
       return { in: "-", out: "-", note: "휴무", combo: "-", isNight: false };
     if (label === "교육" || label === "휴가")
       return { in: "-", out: "-", note: label, combo: "-", isNight: false };
     if (label === "주" || label === "야") {
-      const tType = getDayType(date, holidaySet);
-      const src =
-        tType === "평"
-          ? row.weekday
-          : tType === "토"
-          ? row.saturday
-          : row.holiday;
-      const isNightShift = label === "야";
+      const { tType, src } = getDaySrc(row, date, holidaySet);
+      const isNight = label === "야";
       return {
         in: src.in || "-",
         out: src.out || "-",
-        note: `${tType}${isNightShift ? " (야간)" : ""}`,
+        note: `${tType}${isNight ? " (야간)" : ""}`,
         combo: tType,
-        isNight: isNightShift,
+        isNight,
       };
     }
-    if (label.startsWith("대")) {
-      const tType = getDayType(date, holidaySet);
-      const src =
-        tType === "평"
-          ? row.weekday
-          : tType === "토"
-          ? row.saturday
-          : row.holiday;
-      const n = Number(label.replace(/[^0-9]/g, ""));
-      const isNightShift = Number.isFinite(n) && n >= nightDiaThreshold;
-      return {
-        in: src.in || "-",
-        out: src.out || "-",
-        note: `대근·${tType}${isNightShift ? " (야간)" : ""}`,
-        combo: tType,
-        isNight: isNightShift,
-      };
-    }
+    // "N~" 형태 라벨 — 비번 자리
+    if (/~$/.test(clean))
+      return { in: "-", out: "-", note: "비번", combo: "-", isNight: false };
+    // "대N" — 아래 worktime 로직으로 떨어뜨려서 자동 판정
   }
-  const tType = getDayType(date, holidaySet);
-  const srcToday =
-    tType === "평" ? row.weekday : tType === "토" ? row.saturday : row.holiday;
-  let outTime = srcToday.out || "-",
-    combo = `${tType}-${tType}`,
-    night = false;
-  if (typeof row.dia === "number" && row.dia >= nightDiaThreshold) {
+
+  // ── worktime 기반 자동 야간 판정 (ZIP 기지 전부 + 대N 포함) ──
+  const { tType, src, next } = getDaySrc(row, date, holidaySet);
+
+  // out 비었고 in 차있음 → 야간 출근
+  const outEmpty = !src.out;
+  const inEmpty = !src.in;
+
+  if (outEmpty && !inEmpty) {
+    // 야간. 퇴근 시간은 다음 자리 worktime.out 에서 가져오되, 다음날 dayType 기준.
     const tomorrow = new Date(date);
     tomorrow.setDate(date.getDate() + 1);
-    const nextType = getDayType(tomorrow, holidaySet);
-    const srcNext =
-      nextType === "평"
-        ? row.weekday
-        : nextType === "토"
-        ? row.saturday
-        : row.holiday;
-    outTime = srcNext.out || "-";
-    combo = `${tType}-${nextType}`;
-    night = true;
+    const tomorrowType = getDayType(tomorrow, holidaySet);
+    const nextSrc =
+      tomorrowType === "평"
+        ? row.weekdayNext
+        : tomorrowType === "토"
+        ? row.saturdayNext
+        : row.holidayNext;
+    const nightOut = nextSrc?.out || next?.out || "";
+    const noteLabel =
+      typeof row.dia === "string" && row.dia.startsWith("대")
+        ? "대근·야간"
+        : "야간";
+    return {
+      in: src.in,
+      out: nightOut || "-",
+      note: `${noteLabel} (${tType}-${tomorrowType})`,
+      combo: `${tType}-${tomorrowType}`,
+      isNight: true,
+    };
   }
+
+  // in 비었음 → 비번 자리 (야간 다음날). 출퇴근 표시 없음.
+  if (inEmpty && !outEmpty) {
+    return { in: "-", out: "-", note: "비번", combo: "-", isNight: false };
+  }
+
+  // 둘 다 비었거나 둘 다 차있으면 일반 주간.
+  const noteLabel =
+    typeof row.dia === "string" && row.dia.startsWith("대") ? "대근" : "";
   return {
-    in: srcToday.in || "-",
-    out: outTime,
-    note: night ? `${combo} (야간)` : combo,
-    combo,
-    isNight: night,
+    in: src.in || "-",
+    out: src.out || "-",
+    note: noteLabel ? `${noteLabel}·${tType}` : tType,
+    combo: tType,
+    isNight: false,
   };
 }
 
@@ -999,23 +1032,39 @@ export default function App() {
   );
 
   // commonMap에서 직접 rows 생성 (ZIP/TSV 모두 커버)
+  //
+  //  🌙 야간 판정 & 퇴근 시간 이어붙이기 (threshold 로직 폐기):
+  //   각 교번의 worktime 이 "HH:MM -" 형태(퇴근 비어있음)이면 "야간 출근"이고,
+  //   그 사람의 실제 퇴근 시간은 **다음 교번(= 다음 자리의 사람)의 worktime.out** 이다.
+  //   보통 다음 자리 교번은 "N~" 형태로 in 이 비어있고 out 만 있음.
+  //
+  //   → row 에 weekdayNext/saturdayNext/holidayNext (다음 자리 worktime) 을 넣어두고
+  //     computeInOut 에서 "오늘 out 비어있으면 야간 → next out 사용" 으로 판정.
   const peopleRows = useMemo(() => {
     const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
     const common = commonMap?.[key];
     if (common?.names?.length && common?.gyobun?.length) {
-      // commonMap → peopleRows 변환
+      const splitWT = (wt) => {
+        const s = String(wt || "").replace(/\s/g, "");
+        if (!s || s === "----") return { in: "", out: "" };
+        const parts = s.split("-");
+        return { in: parts[0] || "", out: parts[1] || "" };
+      };
+      const wtFor = (code) => {
+        const k = String(code || "").trim().toLowerCase();
+        return {
+          weekday: splitWT(common.worktime?.nor?.[k] || "----"),
+          saturday: splitWT(common.worktime?.sat?.[k] || "----"),
+          holiday: splitWT(common.worktime?.hol?.[k] || "----"),
+        };
+      };
+      const len = common.names.length;
       return common.names.map((name, i) => {
         const code = common.gyobun[i] || "";
-        const norKey = code.trim().toLowerCase();
-        const nor = common.worktime?.nor?.[norKey] || "----";
-        const sat = common.worktime?.sat?.[norKey] || "----";
-        const hol = common.worktime?.hol?.[norKey] || "----";
-        const splitWT = (wt) => {
-          const s = String(wt || "").replace(/\s/g, "");
-          if (!s || s === "----") return { in: "", out: "" };
-          const parts = s.split("-");
-          return { in: parts[0] || "", out: parts[1] || "" };
-        };
+        const wt = wtFor(code);
+        // 다음 자리 (= 다음 사람) 의 worktime — 오늘 야간이라면 내 퇴근 시간은 여기에 있음
+        const nextCode = common.gyobun[(i + 1) % len] || "";
+        const wtNext = wtFor(nextCode);
         const dia = /^\d+d$/i.test(code)
           ? Number(code.replace(/d$/i, ""))
           : code;
@@ -1023,14 +1072,18 @@ export default function App() {
           seq: String(i + 1),
           name,
           dia,
-          phone: common.phones?.[i] || "", // commonMap에 저장된 전화번호 우선
-          weekday: splitWT(nor),
-          saturday: splitWT(sat),
-          holiday: splitWT(hol),
+          phone: common.phones?.[i] || "",
+          weekday: wt.weekday,
+          saturday: wt.saturday,
+          holiday: wt.holiday,
+          // 야간 판정 전용 — 다음 자리 worktime
+          weekdayNext: wtNext.weekday,
+          saturdayNext: wtNext.saturday,
+          holidayNext: wtNext.holiday,
         };
       });
     }
-    // 폴백: 기존 TSV 파싱
+    // 폴백: 기존 TSV 파싱 (교대 계열은 label 기반이라 next 불필요)
     return parsePeopleTable(currentTableText);
   }, [commonMap, selectedDepot, currentTableText]);
 
@@ -1686,15 +1739,7 @@ export default function App() {
         const n = toDiaNum(yRow?.dia);
         yDiaNum = Number.isFinite(n) ? n : null;
       }
-      return {
-        name,
-        row: rowToday,
-        type,
-        diaNum,
-        daeNum,
-        origHasTilde,
-        yDiaNum,
-      };
+      return { name, row: rowToday, type, diaNum, daeNum, origHasTilde, yDiaNum };
     });
     const work = entries
       .filter((e) => e.type === "work" && Number.isFinite(e.diaNum))
@@ -1738,11 +1783,10 @@ export default function App() {
               typeof yDiaRaw === "string"
                 ? yDiaRaw.trim().replace(/\s+/g, "")
                 : yDiaRaw;
-            let prevNight = false;
-            const n = toDiaNum(yDia);
-            if (Number.isFinite(n) && n >= nightDiaThreshold) prevNight = true;
-            if (typeof yDia === "string" && /^대\d+$/.test(yDia))
-              prevNight = true;
+            // 🌙 worktime 기반 판정 (threshold 폐기)
+            const prevNight = yRow
+              ? computeInOut(yRow, yester, holidaySet).isNight
+              : false;
             displayDia = prevNight ? `${String(yDia)}~` : "비번";
           }
         }
@@ -1752,11 +1796,11 @@ export default function App() {
   }, [
     nameList,
     selectedDate,
-    nightDiaThreshold,
     selectedDepot,
     overridesByDepot,
     commonMap,
     anchorDateStr,
+    holidaySet,
   ]);
 
   const nameGridRows = useMemo(() => {
@@ -2527,12 +2571,7 @@ export default function App() {
                               activeName,
                               d
                             );
-                            const t = computeInOut(
-                              row,
-                              d,
-                              holidaySet,
-                              nightDiaThreshold
-                            );
+                            const t = computeInOut(row, d, holidaySet);
                             const diaLabel =
                               row?.dia == null
                                 ? "-"
@@ -2549,40 +2588,25 @@ export default function App() {
                                 : dayType === "휴"
                                 ? "text-red-400"
                                 : "text-gray-100";
+                            // 🌙 색상: computeInOut 의 isNight 로 통일 (worktime 기반)
+                            //   - 야간 → 하늘색
+                            //   - 일반 근무 → 노란색
+                            //   - 비번/휴무 → 색 없음
                             let diaColorClass = "";
-                            if (selectedDepot === "교대") {
-                              const label = (
-                                typeof row?.dia === "string" ? row.dia : ""
-                              ).replace(/\s/g, "");
-                              if (label === "주")
-                                diaColorClass = "text-yellow-300";
-                              else if (label === "야")
-                                diaColorClass = "text-sky-300";
-                            } else {
-                              if (typeof row?.dia === "number")
-                                diaColorClass =
-                                  row.dia >= nightDiaThreshold
-                                    ? "text-sky-300"
-                                    : "text-yellow-300";
-                              else if (
-                                typeof row?.dia === "string" &&
-                                row.dia.replace(/\s/g, "").startsWith("대")
-                              ) {
-                                const nextDate = new Date(d);
-                                nextDate.setDate(d.getDate() + 1);
-                                const nextRow = rowAtDateForNameWithOverride(
-                                  activeName,
-                                  nextDate
-                                );
-                                const nextDia = nextRow?.dia;
-                                const nextDiaStr = String(nextDia || "");
-                                const isNightTarget =
-                                  nextDiaStr.includes("비번") ||
-                                  nextDiaStr.includes("~");
-                                diaColorClass = isNightTarget
-                                  ? "text-sky-300"
-                                  : "text-yellow-300";
-                              }
+                            const diaStr = String(row?.dia || "").replace(
+                              /\s/g,
+                              ""
+                            );
+                            const isOff =
+                              !diaStr ||
+                              diaStr.startsWith("휴") ||
+                              diaStr.includes("비번") ||
+                              diaStr === "비" ||
+                              diaStr.endsWith("~");
+                            if (!isOff && row?.dia != null) {
+                              diaColorClass = t.isNight
+                                ? "text-sky-300"
+                                : "text-yellow-300";
                             }
                             return (
                               <button
@@ -3504,13 +3528,13 @@ export default function App() {
               nameList,
               myName,
               holidaySet,
-              nightDiaThreshold,
               monthGridMonday,
               computeInOut,
               compareSelected,
               setCompareSelected,
               slideViewportH,
               tablesByDepot,
+              commonMap,
               anchorDateByDepot,
               highlightMap,
               overridesByDepot,
@@ -4043,7 +4067,7 @@ function FixedTabbarPortal({ children }) {
     : null;
 }
 
-// CompareWeeklyBoard — 기존과 동일 (생략 없이 유지)
+// CompareWeeklyBoard — commonMap 기반 row + 단일 야간 판정 (worktime)
 function CompareWeeklyBoard({
   selectedDepot,
   selectedDate,
@@ -4051,11 +4075,11 @@ function CompareWeeklyBoard({
   nameList,
   myName,
   holidaySet,
-  nightDiaThreshold,
   monthGridMonday,
   computeInOut,
   highlightMap,
   tablesByDepot,
+  commonMap,
   anchorDateByDepot,
   compareSelected,
   setCompareSelected,
@@ -4074,8 +4098,67 @@ function CompareWeeklyBoard({
   const parsedByDepot = React.useMemo(() => {
     const map = {};
     for (const depot of DEPOTS) {
+      const key = DEPOT_TO_ZIP_KEY[depot] || depot;
+      const common = commonMap?.[key];
+      // commonMap 우선 (ZIP/TSV 모두) — weekdayNext 등 이어붙임 정보 포함해서 row 생성
+      if (common?.names?.length && common?.gyobun?.length) {
+        const splitWT = (wt) => {
+          const s = String(wt || "").replace(/\s/g, "");
+          if (!s || s === "----") return { in: "", out: "" };
+          const parts = s.split("-");
+          return { in: parts[0] || "", out: parts[1] || "" };
+        };
+        const wtFor = (code) => {
+          const k = String(code || "").trim().toLowerCase();
+          return {
+            weekday: splitWT(common.worktime?.nor?.[k] || "----"),
+            saturday: splitWT(common.worktime?.sat?.[k] || "----"),
+            holiday: splitWT(common.worktime?.hol?.[k] || "----"),
+          };
+        };
+        const len = common.names.length;
+        const rows = common.names.map((name, i) => {
+          const code = common.gyobun[i] || "";
+          const wt = wtFor(code);
+          const nextCode = common.gyobun[(i + 1) % len] || "";
+          const wtNext = wtFor(nextCode);
+          const dia = /^\d+d$/i.test(code)
+            ? Number(code.replace(/d$/i, ""))
+            : code;
+          return {
+            seq: String(i + 1),
+            name,
+            dia,
+            phone: common.phones?.[i] || "",
+            weekday: wt.weekday,
+            saturday: wt.saturday,
+            holiday: wt.holiday,
+            weekdayNext: wtNext.weekday,
+            saturdayNext: wtNext.saturday,
+            holidayNext: wtNext.holiday,
+          };
+        });
+        const nameMap = buildNameIndexMap(rows);
+        map[depot] = {
+          rows,
+          nameMap,
+          names: rows.map((r) => r.name).filter(Boolean),
+        };
+        continue;
+      }
+      // 폴백: TSV 파싱
       const text = tablesByDepot?.[depot] || "";
       const rows = parsePeopleTable(text);
+      // TSV 폴백에도 다음 자리 worktime 이어붙임 (교대/교대(외) 의 라벨 방식은
+      // computeInOut 이 라벨로 먼저 판정하므로 next 가 없어도 문제 없지만,
+      // 일관성을 위해 채워 둠)
+      const len = rows.length;
+      for (let i = 0; i < len; i++) {
+        const nx = rows[(i + 1) % len];
+        rows[i].weekdayNext = nx?.weekday || { in: "", out: "" };
+        rows[i].saturdayNext = nx?.saturday || { in: "", out: "" };
+        rows[i].holidayNext = nx?.holiday || { in: "", out: "" };
+      }
       const nameMap = buildNameIndexMap(rows);
       map[depot] = {
         rows,
@@ -4084,7 +4167,7 @@ function CompareWeeklyBoard({
       };
     }
     return map;
-  }, [tablesByDepot]);
+  }, [tablesByDepot, commonMap]);
   const rowAtDateFor = React.useCallback(
     (name, depot, date) => {
       const pack = parsedByDepot[depot];
@@ -4843,12 +4926,7 @@ function CompareWeeklyBoard({
                     </div>
                     {weekDays.map((d) => {
                       const row = rowAtDateFor(name, depot, d);
-                      const t = computeInOut(
-                        row,
-                        d,
-                        holidaySet,
-                        nightDiaThreshold
-                      );
+                      const t = computeInOut(row, d, holidaySet);
                       const dia =
                         row?.dia === undefined
                           ? "-"
@@ -4865,48 +4943,29 @@ function CompareWeeklyBoard({
                           : "*"
                         : diaLabel || "-";
                       const outside = d.getMonth() !== monthIdx;
+
+                      // 🌙 색상: computeInOut().isNight 하나로 통일 (worktime 기반)
+                      //   - 야간 → 하늘색 배경
+                      //   - 출/퇴근 시간이 있는 근무 → 노란색 배경
+                      //   - 휴/비번 → 회색 배경
                       let bgColor = "bg-gray-800/60";
-                      const norm = (v) =>
-                        typeof v === "string" ? v.replace(/\s/g, "") : v;
-                      const isOffDia = (v) =>
-                        typeof v === "string" &&
-                        (v.includes("비") || v.startsWith("휴"));
-                      const isTime = (v) =>
-                        typeof v === "string" &&
-                        /^\d{1,2}\s*:\s*\d{2}$/.test(v);
-                      const todayDia = norm(row?.dia);
-                      const nextDay = addDaysSafe(d, 1);
-                      const nextDia = norm(
-                        rowAtDateFor(name, depot, nextDay)?.dia
+                      const todayDiaStr = String(row?.dia || "").replace(
+                        /\s/g,
+                        ""
                       );
-                      if (isOffDia(todayDia)) {
-                        bgColor = "bg-gray-800/60";
-                      } else {
-                        const MORNING_HOUR = 12,
-                          outH = hourFromStr(t.out);
-                        let isNight = false;
-                        if (depot === "교대" || depot === "교대(외)") {
-                          isNight =
-                            todayDia === "야" &&
-                            typeof nextDia === "string" &&
-                            nextDia.startsWith("휴");
-                        } else {
-                          const nextIsBiban =
-                            typeof nextDia === "string" &&
-                            nextDia.includes("비");
-                          const outIsMorning =
-                            outH != null && outH <= MORNING_HOUR;
-                          isNight = nextIsBiban || outIsMorning;
-                        }
-                        const hasWork =
-                          (isTime(t.in) ||
-                            isTime(t.out) ||
-                            isSCodeDay?.(t.in) ||
-                            isSCodeDay?.(t.out)) &&
-                          !isNight;
-                        if (isNight) bgColor = "bg-sky-500/30";
+                      const isOff =
+                        !todayDiaStr ||
+                        todayDiaStr.startsWith("휴") ||
+                        todayDiaStr.includes("비번") ||
+                        todayDiaStr === "비" ||
+                        todayDiaStr.endsWith("~");
+                      if (!isOff) {
+                        const isTime = (v) =>
+                          typeof v === "string" &&
+                          /^\d{1,2}\s*:\s*\d{2}$/.test(v);
+                        const hasWork = isTime(t.in) || isTime(t.out);
+                        if (t.isNight) bgColor = "bg-sky-500/30";
                         else if (hasWork) bgColor = "bg-yellow-500/30";
-                        else bgColor = "bg-gray-800/60";
                       }
                       return (
                         <div
