@@ -217,8 +217,12 @@ export default function SetupWizard({
           const baseCodeIdx = myData.baseCode
             ? myData.gyobun.findIndex(
                 (c) =>
-                  String(c || "").trim().toLowerCase() ===
-                  String(myData.baseCode || "").trim().toLowerCase()
+                  String(c || "")
+                    .trim()
+                    .toLowerCase() ===
+                  String(myData.baseCode || "")
+                    .trim()
+                    .toLowerCase()
               )
             : -1;
           const newBaseName =
@@ -575,14 +579,19 @@ export default function SetupWizard({
                   <button
                     key={`${code}-${idx}`}
                     onClick={() => setMyCode(code)}
-                    className={`py-2 px-1 rounded-lg text-xs font-bold text-center transition
-                      ${
-                        isSelected
-                          ? "ring-2 ring-white bg-gray-600 scale-105"
-                          : "bg-gray-700 hover:bg-gray-600"
-                      } ${colorCls}`}
+                    className={`relative py-2 px-1 rounded-lg text-xs font-bold text-center transition-all duration-150
+        ${
+          isSelected
+            ? "ring-2 ring-indigo-300 bg-indigo-600 scale-110 shadow-lg shadow-indigo-500/50 z-10 !text-white"
+            : `bg-gray-700 hover:bg-gray-600 ${colorCls}`
+        }`}
                   >
                     {displayCode(code)}
+                    {isSelected && (
+                      <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-white rounded-full flex items-center justify-center text-indigo-600 text-[9px] font-black shadow">
+                        ✓
+                      </span>
+                    )}
                   </button>
                 );
               })}
