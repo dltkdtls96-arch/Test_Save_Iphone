@@ -263,41 +263,69 @@ export default function SettingsView(props) {
       aria-label="설정"
     >
       {/* Sticky header */}
-      <div className="sticky top-0 z-10 bg-gray-800 px-4 pt-3 pb-2 border-b border-gray-700/50">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
+      <div
+        className="sticky top-0 z-10 px-4 pt-4 pb-3"
+        style={{
+          background: "var(--surface)",
+          borderBottom: "1px solid var(--border)",
+        }}
+      >
+        <h2
+          className="text-[18px] font-bold flex items-center gap-2"
+          style={{ color: "var(--text-primary)" }}
+        >
           <SettingsIcon className="w-5 h-5" />
           설정
         </h2>
       </div>
 
       <div className="px-4 py-3 space-y-4">
-        {/* ─── 빠른 ZIP 등록 (간소화) ─── */}
-        <section className="p-4 rounded-2xl bg-gradient-to-br from-indigo-900/50 to-purple-900/30 border border-indigo-700/40">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-sm font-semibold text-indigo-200">
-              📦 ZIP 파일 등록
-            </div>
-            <button
-              className="text-[11px] text-indigo-300 underline"
-              onClick={() => onOpenSetupWizard?.()}
+        {/* ─── 데이터 등록 ─── */}
+        <section
+          className="p-5 rounded-2xl"
+          style={{ background: "var(--surface-2)" }}
+        >
+          <div className="flex items-start gap-3 mb-4">
+            <div
+              className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 text-xl"
+              style={{
+                background: "var(--accent-soft)",
+                color: "var(--accent)",
+              }}
             >
-              마법사 다시 열기
-            </button>
+              📦
+            </div>
+            <div className="flex-1 min-w-0">
+              <div
+                className="text-[15px] font-semibold"
+                style={{ color: "var(--text-primary)" }}
+              >
+                교번 데이터 등록
+              </div>
+              <p
+                className="text-[12px] mt-0.5 leading-relaxed"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                ZIP 파일을 등록하면 근무표·행로표가 자동으로 반영됩니다.
+              </p>
+            </div>
           </div>
 
-          <label className="block w-full">
-            <div
-              className={`w-full py-3 rounded-xl border-2 border-dashed text-center cursor-pointer transition text-sm
-                ${
-                  zipLoading
-                    ? "border-gray-600 text-gray-500"
-                    : "border-indigo-500 hover:border-indigo-400 text-indigo-200 bg-indigo-950/30"
-                }`}
-            >
-              {zipLoading ? (
-                <div className="flex flex-col items-center gap-1">
-                  <div className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+          <div className="flex flex-col gap-2">
+            <label className="block w-full">
+              <div
+                className="w-full py-3 rounded-xl text-center cursor-pointer transition text-sm font-semibold flex items-center justify-center gap-2"
+                style={{
+                  background: zipLoading ? "var(--surface-3)" : "var(--accent)",
+                  color: zipLoading ? "var(--text-tertiary)" : "#ffffff",
+                  boxShadow: zipLoading
+                    ? "none"
+                    : "0 2px 8px rgba(49,130,246,0.22)",
+                }}
+              >
+                {zipLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     <span className="text-xs">
                       {zipProgress.phase === "opening" && "ZIP 열기..."}
                       {zipProgress.phase === "reading_texts" &&
@@ -305,36 +333,61 @@ export default function SettingsView(props) {
                       {zipProgress.phase === "parsing" && "파싱 중..."}
                       {zipProgress.phase === "done" && "완료!"}
                     </span>
-                  </div>
-                  {zipProgress.total > 0 && (
-                    <div className="w-40 h-1 bg-gray-700 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-indigo-400 transition-all"
-                        style={{ width: `${progressPct}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <span>📦 ZIP 파일 선택해서 바로 등록</span>
-              )}
-            </div>
-            <input
-              type="file"
-              accept=".zip"
-              className="hidden"
-              onChange={handleZipUploadInSettings}
-              disabled={zipLoading}
-            />
-          </label>
+                  </>
+                ) : (
+                  <span>교번 ZIP 파일 등록</span>
+                )}
+              </div>
+              <input
+                type="file"
+                accept=".zip"
+                className="hidden"
+                onChange={handleZipUploadInSettings}
+                disabled={zipLoading}
+              />
+            </label>
 
+            <button
+              type="button"
+              onClick={() => onOpenSetupWizard?.()}
+              className="w-full py-2.5 rounded-xl text-[13px] font-medium transition"
+              style={{
+                background: "transparent",
+                color: "var(--text-secondary)",
+                boxShadow: "inset 0 0 0 1px var(--border-strong)",
+              }}
+            >
+              설정 마법사로 처음부터 시작
+            </button>
+          </div>
+
+          {zipProgress.total > 0 && zipLoading && (
+            <div
+              className="mt-3 h-1 bg-gray-700 rounded-full overflow-hidden"
+              style={{ background: "var(--surface-3)" }}
+            >
+              <div
+                className="h-full transition-all"
+                style={{
+                  width: `${progressPct}%`,
+                  background: "var(--accent)",
+                }}
+              />
+            </div>
+          )}
           {zipError && (
-            <div className="mt-2 p-2 rounded-lg bg-red-900/50 text-red-300 text-[11px]">
+            <div
+              className="mt-3 p-2.5 rounded-lg text-[12px]"
+              style={{ background: "var(--red-soft)", color: "var(--red)" }}
+            >
               {zipError}
             </div>
           )}
           {zipDoneMsg && (
-            <div className="mt-2 p-2 rounded-lg bg-green-900/40 text-green-300 text-[11px]">
+            <div
+              className="mt-3 p-2.5 rounded-lg text-[12px]"
+              style={{ background: "var(--green-soft)", color: "var(--green)" }}
+            >
               {zipDoneMsg}
             </div>
           )}

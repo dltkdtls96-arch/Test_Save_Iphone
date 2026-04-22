@@ -4617,70 +4617,54 @@ function CompareWeeklyBoard({
         </div>
       </div>
       {pickerOpen && (
-        <>
-          <div
-            className="flex items-center justify-between gap-2 flex-wrap mb-2"
-            data-no-gesture
-            style={{ position: "relative", zIndex: 3, touchAction: "auto" }}
-          >
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-300">소속</label>
-              <select
-                className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
-                value={pickerDepot}
-                onChange={(e) => {
-                  setPickerDepot(e.target.value);
-                }}
-              >
-                {DEPOTS.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="month"
-                className="bg-gray-700 rounded-xl px-2 py-1 text-xs"
-                value={`${selectedDate.getFullYear()}-${String(
-                  selectedDate.getMonth() + 1
-                ).padStart(2, "0")}`}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (!v) return;
-                  const [y, m] = v.split("-").map(Number);
-                  const next = new Date(selectedDate);
-                  next.setFullYear(y);
-                  next.setMonth(m - 1, 1);
-                  setSelectedDate(stripTime(next));
-                }}
-              />
+        <div
+          className="mb-2 rounded-2xl overflow-hidden"
+          data-no-gesture
+          style={{
+            position: "relative",
+            zIndex: 3,
+            touchAction: "auto",
+            background: "var(--surface-2)",
+            boxShadow: "var(--shadow-sm)",
+          }}
+        >
+          {/* ── 섹션 1: 그룹 선택 / 관리 ── */}
+          <div className="p-3">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider mb-2"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              그룹
             </div>
-          </div>
-          <div
-            className="flex items-center justify-between gap-2 mb-2"
-            data-no-gesture
-            style={{ position: "relative", zIndex: 3, touchAction: "auto" }}
-          >
-            <div className="flex flex-wrap gap-1">
+
+            {/* 그룹 칩 리스트 */}
+            <div className="flex flex-wrap gap-1.5 mb-2">
               {groups.map((g) => (
                 <button
                   key={g.id}
                   onClick={() => setActiveGroupId(g.id)}
-                  className={`flex items-center gap-1 px-3 py-1 rounded-full text-[11px] border transition-colors ${
-                    g.id === activeGroupId
-                      ? "bg-indigo-600 text-white border-indigo-400"
-                      : "bg-gray-700 text-gray-200 border-gray-500"
-                  }`}
+                  className="px-3 py-1.5 rounded-full text-[12px] font-medium transition-all"
                   type="button"
+                  style={
+                    g.id === activeGroupId
+                      ? {
+                          background: "var(--accent)",
+                          color: "#fff",
+                          boxShadow: "0 2px 6px rgba(49,130,246,0.28)",
+                        }
+                      : {
+                          background: "var(--surface)",
+                          color: "var(--text-secondary)",
+                          boxShadow: "inset 0 0 0 1px var(--border)",
+                        }
+                  }
                 >
-                  <span className="truncate max-w-[90px]">{g.label}</span>
+                  <span className="truncate max-w-[110px] inline-block align-middle">
+                    {g.label}
+                  </span>
                 </button>
               ))}
-            </div>
-            <div className="flex items-center gap-1 text-[11px]">
-              그룹:
               <button
-                className="px-2 py-1 rounded-full bg-gray-700 text-xs text-white"
                 type="button"
                 onClick={() => {
                   setGroups((prev) => {
@@ -4698,45 +4682,79 @@ function CompareWeeklyBoard({
                     return next;
                   });
                 }}
-              >
-                +추가
-              </button>
-              <button
-                className="px-2 py-1 rounded-full bg-gray-600 text-white disabled:opacity-40"
-                type="button"
-                disabled={!activeGroup}
-                onClick={() => {
-                  if (!activeGroup) return;
-                  setEditingGroupId(activeGroup.id);
-                  setEditingLabel(activeGroup.label || "");
+                className="px-3 py-1.5 rounded-full text-[12px] font-medium"
+                style={{
+                  background: "transparent",
+                  color: "var(--accent)",
+                  boxShadow: "inset 0 0 0 1px var(--accent)",
                 }}
               >
-                이름 변경
-              </button>
-              <button
-                className="px-2 py-1 rounded-full bg-red-600 text-white disabled:opacity-40"
-                type="button"
-                disabled={!activeGroup || groups.length <= 1}
-                onClick={handleDeleteGroup}
-              >
-                삭제
+                + 새 그룹
               </button>
             </div>
-          </div>
-          {editingGroupId && (
-            <div
-              className="mb-2 flex items-center gap-2"
-              data-no-gesture
-              style={{ position: "relative", zIndex: 3, touchAction: "auto" }}
-            >
-              <input
-                autoFocus
-                className="flex-1 bg-gray-900 rounded-xl px-3 py-2 text-[12px] border border-indigo-400 text-white"
-                placeholder="그룹 이름 입력…"
-                value={editingLabel}
-                onChange={(e) => setEditingLabel(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
+
+            {/* 그룹 액션 — 이름변경 / 삭제 */}
+            {activeGroup && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingGroupId(activeGroup.id);
+                    setEditingLabel(activeGroup.label || "");
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium"
+                  style={{
+                    background: "var(--surface-3)",
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  이름 변경
+                </button>
+                <button
+                  type="button"
+                  disabled={groups.length <= 1}
+                  onClick={handleDeleteGroup}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-medium disabled:opacity-40"
+                  style={{
+                    background: "var(--red-soft)",
+                    color: "var(--red)",
+                  }}
+                >
+                  그룹 삭제
+                </button>
+              </div>
+            )}
+
+            {/* 그룹 이름 편집 인풋 */}
+            {editingGroupId && (
+              <div className="mt-2 flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  className="flex-1 px-3 py-2 text-[13px] rounded-lg"
+                  placeholder="그룹 이름 입력…"
+                  value={editingLabel}
+                  onChange={(e) => setEditingLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const trimmed = editingLabel.trim();
+                      setGroups((prev) =>
+                        prev.map((g) =>
+                          g.id === editingGroupId
+                            ? { ...g, label: trimmed || g.label }
+                            : g
+                        )
+                      );
+                      setEditingGroupId(null);
+                      setEditingLabel("");
+                    } else if (e.key === "Escape") {
+                      setEditingGroupId(null);
+                      setEditingLabel("");
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
                     const trimmed = editingLabel.trim();
                     setGroups((prev) =>
                       prev.map((g) =>
@@ -4747,86 +4765,109 @@ function CompareWeeklyBoard({
                     );
                     setEditingGroupId(null);
                     setEditingLabel("");
-                  } else if (e.key === "Escape") {
+                  }}
+                  className="px-3 py-2 rounded-lg text-[12px] font-semibold"
+                  style={{ background: "var(--accent)", color: "#fff" }}
+                >
+                  저장
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     setEditingGroupId(null);
                     setEditingLabel("");
-                  }
-                }}
-              />
-              <button
-                className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-[12px]"
-                type="button"
-                onClick={() => {
-                  const trimmed = editingLabel.trim();
-                  setGroups((prev) =>
-                    prev.map((g) =>
-                      g.id === editingGroupId
-                        ? { ...g, label: trimmed || g.label }
-                        : g
-                    )
-                  );
-                  setEditingGroupId(null);
-                  setEditingLabel("");
-                }}
-              >
-                저장
-              </button>
-              <button
-                className="px-2 py-2 rounded-xl bg-gray-700 text-gray-200 text-[12px]"
-                type="button"
-                onClick={() => {
-                  setEditingGroupId(null);
-                  setEditingLabel("");
-                }}
-              >
-                취소
-              </button>
+                  }}
+                  className="px-2.5 py-2 rounded-lg text-[12px]"
+                  style={{
+                    background: "var(--surface-3)",
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  취소
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── 섹션 2: 인원 추가 ── */}
+          <div className="p-3" style={{ borderTop: "1px solid var(--border)" }}>
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider mb-2"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              인원 추가 {activeGroup ? `→ ${activeGroup.label}` : ""}
             </div>
-          )}
-          <div
-            className="mt-1 p-2 rounded-xl bg-gray-900 shadow-lg border border-gray-700"
-            data-no-gesture
-            style={{ position: "relative", zIndex: 3, touchAction: "auto" }}
-          >
+
+            {/* 소속 + 검색 */}
             <div className="flex items-center gap-2 mb-2">
+              <select
+                className="px-2 py-1.5 text-[12px] rounded-lg"
+                value={pickerDepot}
+                onChange={(e) => setPickerDepot(e.target.value)}
+                style={{ minWidth: "90px" }}
+              >
+                {DEPOTS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
               <input
-                className="flex-1 bg-gray-700 rounded-xl px-2 py-1 text-sm"
+                className="flex-1 px-3 py-1.5 text-[12px] rounded-lg"
                 placeholder="이름 검색…"
                 value={filterText}
                 onChange={(e) => setFilterText(e.target.value)}
               />
-              <span className="text-xs text-gray-400">({pickerDepot})</span>
             </div>
-            <div
-              className="grid gap-1"
-              style={{
-                gridTemplateColumns: "repeat(auto-fill, minmax(60px, 1fr))",
-              }}
-            >
-              {selectableNames.map((n) => {
-                const bg = highlightMap?.[n] || "#374151",
-                  fg = getContrastText(bg);
-                return (
-                  <button
-                    key={`${pickerDepot}::${n}`}
-                    onClick={() => addPerson(n, pickerDepot)}
-                    className="px-1.5 py-0.5 rounded-md text-[11px] font-semibold truncate transition-opacity"
-                    title={`${pickerDepot} • ${n} 추가`}
-                    style={{
-                      backgroundColor: bg,
-                      color: fg,
-                      border: "1px solid rgba(255,255,255,0.15)",
-                      opacity: 0.95,
-                    }}
-                    type="button"
-                  >
-                    {n}
-                  </button>
-                );
-              })}
-            </div>
+
+            {/* 선택 가능한 이름 그리드 */}
+            {selectableNames.length > 0 ? (
+              <div
+                className="grid gap-1"
+                style={{
+                  gridTemplateColumns: "repeat(auto-fill, minmax(60px, 1fr))",
+                }}
+              >
+                {selectableNames.map((n) => {
+                  const bg = highlightMap?.[n] || null;
+                  const fg = bg ? getContrastText(bg) : null;
+                  return (
+                    <button
+                      key={`${pickerDepot}::${n}`}
+                      onClick={() => addPerson(n, pickerDepot)}
+                      className="px-2 py-1 rounded-lg text-[11px] font-semibold truncate transition-all active:scale-95"
+                      title={`${pickerDepot} • ${n} 추가`}
+                      style={
+                        bg
+                          ? {
+                              backgroundColor: bg,
+                              color: fg,
+                            }
+                          : {
+                              background: "var(--surface)",
+                              color: "var(--text-primary)",
+                              boxShadow: "inset 0 0 0 1px var(--border)",
+                            }
+                      }
+                      type="button"
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                className="text-center py-4 text-[12px]"
+                style={{ color: "var(--text-tertiary)" }}
+              >
+                {filterText.trim()
+                  ? "검색 결과가 없습니다"
+                  : "추가할 인원이 없습니다"}
+              </div>
+            )}
           </div>
-        </>
+        </div>
       )}
       <div className="relative mt-2" style={{ zIndex: 1 }}>
         {todayColIndex >= 0 && (

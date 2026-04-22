@@ -63,50 +63,67 @@ body {
 }
 
 /* ==============================
-   2) 라이트 테마 변수 (명도 계층화로 깊이감 확보)
+   2) 라이트 테마 변수 (배경·탭바 단색 통일)
    ============================== */
 
 html:not([data-theme]),
 html[data-theme="light"] {
   color-scheme: light;
 
-  /* 퐁당퐁당 명도 차이를 주어 흰색 뭉침 방지 */
-  --bg-base: rgba(249, 249, 249, 0.85); /* 1. 앱 배경 (연한 회색) */
-  --card-strong: #fcfcfc; /* 2. 메인 패널 카드 (눈부심을 줄인 부드러운 흰색) */
-  --card-soft-alt: #f4f5f8; /* 3. 패널 내부 그룹 바탕 (아주 옅은 회색으로 구분감) */
-  --cell-bg: #fbfbfd; /* 4. 그 안의 개별 셀 (메인 카드보다 아주 미세하게 톤다운) */
-  --cell-out-bg: #e5e5ea; /* 비활성/영역 밖 셀 */
+  /* 배경·탭바: 동일한 불투명 단색 */
+  --bg-base: #f2f3f5;
 
-  --card-inner: rgba(118, 118, 128, 0.12); /* 인풋 폼 등 */
+  --card-strong: #ffffff; /* 메인 카드 (가장 밝음) */
+  --card-soft-alt: #f0f2f6; /* 카드 안의 그룹 바탕 */
+  --cell-bg: #f6f8fb;
+  --cell-out-bg: #d4d8df; /* 이전·다음달 셀 */
 
-  --border-soft: rgba(60, 60, 67, 0.18);
-  --border-strong: rgba(60, 60, 67, 0.3);
+  --card-inner: rgba(118, 118, 128, 0.12);
+
+  --border-soft: rgba(60, 60, 67, 0.12);
+  --border-strong: rgba(60, 60, 67, 0.22);
 
   --text-main: #000000;
   --text-sub: rgba(60, 60, 67, 0.6);
-  --text-muted: rgba(60, 60, 67, 0.3);
+  --text-muted: rgba(60, 60, 67, 0.4);
+  --text-tertiary: rgba(60, 60, 67, 0.5);
 
   --accent: #007aff;
+  --accent-soft: rgba(0, 122, 255, 0.12);
   --accent-red: #ff3b30;
   --accent-green: #34c759;
   --accent-orange: #ff9500;
   --accent-yellow: #ffcc00;
+  --accent-purple: #af52de;
 
-  --tabbar-bg: rgba(249, 249, 249, 0.85);
-  --tabbar-sep: rgba(60, 60, 67, 0.25);
+  /* 폴백 색상 키 */
+  --surface: #ffffff;
+  --surface-2: #f0f2f6;
+  --surface-3: #e6e9ee;
+  --border: rgba(60, 60, 67, 0.12);
+  --text-primary: #000000;
+  --text-secondary: rgba(60, 60, 67, 0.6);
+  --red: #ff3b30;
+  --red-soft: rgba(255, 59, 48, 0.12);
+  --green: #34c759;
+  --green-soft: rgba(52, 199, 89, 0.14);
 
-  /* iOS 스타일 0.5px 얇은 테두리 + 부드러운 그림자 */
-  --stroke-card: 0 0 0 0.5px rgba(0, 0, 0, 0.08);
-  --shadow-float: var(--stroke-card), 0 8px 24px rgba(0, 0, 0, 0.08);
-  --shadow-card: var(--stroke-card), 0 2px 8px rgba(0, 0, 0, 0.05);
+  /* 탭바: 배경과 동일 */
+  --tabbar-bg: #f2f3f5;
+  --tabbar-sep: rgba(60, 60, 67, 0.18);
+
+  --stroke-card: 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  --shadow-float: var(--stroke-card), 0 6px 20px rgba(0, 0, 0, 0.06);
+  --shadow-card: var(--stroke-card), 0 1px 4px rgba(0, 0, 0, 0.05);
+  --shadow-cell: 0 0 0 0.5px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: var(--stroke-card), 0 1px 3px rgba(0, 0, 0, 0.04);
 
   --dia-day: #ff9500;
   --dia-night: #007aff;
-  --dia-off: rgba(60, 60, 67, 0.3);
+  --dia-off: rgba(60, 60, 67, 0.45);
   --dia-dae: #ff6b00;
 }
 
-/* 라이트 body */
 html:not([data-theme]) body,
 html[data-theme="light"] body {
   background-color: var(--bg-base);
@@ -114,16 +131,20 @@ html[data-theme="light"] body {
 }
 
 /* ==============================
-   3) 다크 테마 변수
+   3) 다크 테마 변수 (배경·탭바 단색 통일)
    ============================== */
 
 html[data-theme="dark"] {
   color-scheme: dark;
 
+  /* 배경·탭바: 동일한 불투명 단색 */
   --bg-base: #1c1c1e;
-  --card-strong: #1c1c1e;
-  --card-soft: #1c1c1e;
-  --card-soft-alt: #2c2c2e;
+
+  --card-strong: #1c1c1e; /* 메인 카드 — 배경보다 한 단계 밝게 떠보이게 */
+  --card-soft: #2c2c2e;
+  --card-soft-alt: #2c2c2e; /* 안쪽 그룹 */
+  --cell-bg: #3a3a3c; /* 셀 */
+  --cell-out-bg: #242426;
   --card-inner: rgba(118, 118, 128, 0.24);
 
   --border-soft: rgba(84, 84, 88, 0.45);
@@ -132,27 +153,41 @@ html[data-theme="dark"] {
   --text-main: #ffffff;
   --text-sub: rgba(235, 235, 245, 0.6);
   --text-muted: rgba(235, 235, 245, 0.3);
+  --text-tertiary: rgba(235, 235, 245, 0.5);
 
   --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.15);
   --accent-red: #ff453a;
   --accent-green: #30d158;
   --accent-orange: #ff9f0a;
   --accent-yellow: #ffd60a;
+  --accent-purple: #bf5af2;
 
-  --tabbar-bg: rgba(28, 28, 30, 0.85);
+  /* 폴백 색상 키 */
+  --surface: #2c2c2e;
+  --surface-2: #3a3a3c;
+  --surface-3: #48484a;
+  --border: rgba(84, 84, 88, 0.45);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(235, 235, 245, 0.6);
+  --red: #ff453a;
+  --red-soft: rgba(255, 69, 58, 0.15);
+  --green: #30d158;
+  --green-soft: rgba(48, 209, 88, 0.18);
+
+  /* 탭바: 배경과 동일 */
+  --tabbar-bg: #1c1c1e;
   --tabbar-sep: rgba(84, 84, 88, 0.6);
 
-  /* 다크모드는 그림자보다 명도와 테두리로 구분 */
-  --stroke-card: 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  --stroke-card: 0 0 0 0.5px rgba(255, 255, 255, 0.08);
   --shadow-float: var(--stroke-card), 0 12px 32px rgba(0, 0, 0, 0.6);
   --shadow-card: var(--stroke-card), 0 2px 8px rgba(0, 0, 0, 0.3);
-
-  --cell-bg: #2c2c2e;
-  --cell-out-bg: rgba(28, 28, 30, 0.4);
+  --shadow-cell: 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  --shadow-sm: var(--stroke-card), 0 1px 3px rgba(0, 0, 0, 0.3);
 
   --dia-day: #ffd60a;
   --dia-night: #46a3ff;
-  --dia-off: rgba(235, 235, 245, 0.28);
+  --dia-off: rgba(235, 235, 245, 0.35);
   --dia-dae: #ff9f0a;
 }
 
@@ -165,26 +200,15 @@ html[data-theme="dark"] body {
    4) Tailwind → 변수 재매핑 (공통)
    ============================== */
 
-/* 배경 */
 html:not([data-theme]) .bg-slate-950,
 html[data-theme="light"] .bg-slate-950,
 html[data-theme="dark"] .bg-slate-950 {
   background-color: var(--bg-base) !important;
 }
 
-/* 메인 패널 (흰색/검은색 카드) */
 html:not([data-theme]) .bg-gray-900,
 html[data-theme="light"] .bg-gray-900,
 html[data-theme="dark"] .bg-gray-900,
-html:not([data-theme]) .bg-gray-900\/60,
-html[data-theme="light"] .bg-gray-900\/60,
-html[data-theme="dark"] .bg-gray-900\/60,
-html:not([data-theme]) .bg-gray-900\/70,
-html[data-theme="light"] .bg-gray-900\/70,
-html[data-theme="dark"] .bg-gray-900\/70,
-html:not([data-theme]) .bg-gray-900\/80,
-html[data-theme="light"] .bg-gray-900\/80,
-html[data-theme="dark"] .bg-gray-900\/80,
 html:not([data-theme]) .bg-gray-800,
 html[data-theme="light"] .bg-gray-800,
 html[data-theme="dark"] .bg-gray-800 {
@@ -192,7 +216,12 @@ html[data-theme="dark"] .bg-gray-800 {
   border-radius: 20px !important;
 }
 
-/* 중첩 카드/패널용 (연한 회색으로 명확한 구분감) */
+html:not([data-theme]) .bg-white-1000,
+html[data-theme="light"] .bg-white-1000,
+html[data-theme="dark"] .bg-white-1000 {
+  background-color: transparent !important;
+}
+
 html:not([data-theme]) .bg-gray-800\/60,
 html[data-theme="light"] .bg-gray-800\/60,
 html[data-theme="dark"] .bg-gray-800\/60,
@@ -211,7 +240,6 @@ html[data-theme="dark"] .bg-gray-600 {
   background-color: var(--card-inner) !important;
 }
 
-/* 텍스트 */
 html:not([data-theme]) .text-white,
 html[data-theme="light"] .text-white,
 html:not([data-theme]) .text-gray-100,
@@ -237,14 +265,20 @@ html[data-theme="light"] .text-gray-400 {
   color: var(--text-muted) !important;
 }
 
-/* 구분선 */
+html:not([data-theme]) .text-gray-500,
+html[data-theme="light"] .text-gray-500 {
+  color: var(--text-muted) !important;
+}
+
 html:not([data-theme]) .border-gray-700,
 html[data-theme="light"] .border-gray-700,
-html[data-theme="dark"] .border-gray-700 {
+html[data-theme="dark"] .border-gray-700,
+html:not([data-theme]) .divide-gray-700 > * + *,
+html[data-theme="light"] .divide-gray-700 > * + *,
+html[data-theme="dark"] .divide-gray-700 > * + * {
   border-color: var(--border-soft) !important;
 }
 
-/* hover */
 html:not([data-theme]) .hover\:bg-gray-700:hover,
 html[data-theme="light"] .hover\:bg-gray-700:hover,
 html[data-theme="dark"] .hover\:bg-gray-700:hover,
@@ -256,10 +290,9 @@ html[data-theme="dark"] .hover\:bg-gray-600:hover {
 }
 
 /* ==============================
-   5) 강조색 텍스트 (다이아 및 시스템 강조색)
+   5) 강조색 텍스트
    ============================== */
 
-/* --- 1. 파란색 계열 (야간 / Night) --- */
 html .text-blue-400,
 html .text-blue-500,
 html .text-sky-300,
@@ -268,33 +301,40 @@ html .text-cyan-400 {
   color: var(--dia-night) !important;
 }
 
-/* --- 2. 노란색/주황색 계열 (주간 / Day) --- */
 html .text-yellow-300,
 html .text-yellow-400,
 html .text-amber-300 {
   color: var(--dia-day) !important;
 }
 
-/* --- 3. 붉은색 계열 (강조 / 휴일) --- */
 html .text-red-400,
 html .text-red-500,
 html .text-rose-400 {
   color: var(--accent-red) !important;
 }
 
-/* --- 4. 주황색 계열 (대근 / Dae) --- */
 html .text-amber-400,
 html .text-orange-400 {
   color: var(--dia-dae) !important;
 }
 
-/* --- 5. 무채색 계열 (비번 / Off) --- */
+html .text-purple-300,
+html .text-purple-400 {
+  color: var(--accent-purple) !important;
+}
+html .text-emerald-300,
+html .text-emerald-400,
+html .text-green-300,
+html .text-green-400 {
+  color: var(--accent-green) !important;
+}
+
 html .text-gray-400:not(.calendar-day-header) {
   color: var(--dia-off) !important;
 }
 
 /* ==============================
-   6) 카드 / 그림자 — iOS 네이티브
+   6) 카드 / 그림자
    ============================== */
 
 html:not([data-theme]) .bg-gray-800.rounded-2xl,
@@ -322,35 +362,38 @@ html[data-theme="dark"] .shadow-lg {
 html:not([data-theme]) .shadow-inner,
 html[data-theme="light"] .shadow-inner,
 html[data-theme="dark"] .shadow-inner {
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06) !important;
 }
 
 /* ==============================
-   7) 캘린더 셀 — iOS 네이티브
+   7) 캘린더 셀
    ============================== */
 
-/* 이번달 셀: 선명한 팝업 효과 */
 html:not([data-theme]) .bg-gray-700\/60,
 html[data-theme="light"] .bg-gray-700\/60 {
   background-color: var(--cell-bg) !important;
   border-radius: 12px !important;
-  box-shadow: var(--shadow-card) !important;
+  box-shadow: var(--shadow-cell) !important;
 }
 
 html[data-theme="dark"] .bg-gray-700\/60 {
   background-color: var(--cell-bg) !important;
   border-radius: 12px !important;
-  box-shadow: var(--shadow-card) !important;
+  box-shadow: var(--shadow-cell) !important;
 }
 
-/* 이전/다음달 셀 */
 html:not([data-theme]) .bg-gray-800\/40,
 html[data-theme="light"] .bg-gray-800\/40 {
   background-color: var(--cell-out-bg) !important;
   border-radius: 12px !important;
   border: none !important;
-  box-shadow: none !important;
-  opacity: 0.8;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.04) !important;
+  opacity: 0.55;
+}
+
+html:not([data-theme]) .bg-gray-800\/40 *,
+html[data-theme="light"] .bg-gray-800\/40 * {
+  color: var(--text-muted) !important;
 }
 
 html[data-theme="dark"] .bg-gray-800\/40 {
@@ -358,13 +401,9 @@ html[data-theme="dark"] .bg-gray-800\/40 {
   border-radius: 12px !important;
   border: none !important;
   box-shadow: none !important;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
-/* 오늘/선택 링
-   - ring-offset 제거: offset 때문에 링이 바깥으로 밀려 시각적 겹침이 생김.
-   - DOM 순서상 파랑(isSelected span)이 빨강(isToday span) 뒤에 렌더되어
-     자연스럽게 위에 덮이도록 되어 있으므로 z-index 조작 불필요. */
 .ring-blue-400 {
   --tw-ring-color: var(--accent) !important;
 }
@@ -372,7 +411,6 @@ html[data-theme="dark"] .bg-gray-800\/40 {
   --tw-ring-color: var(--accent-red) !important;
 }
 
-/* 요일 헤더 */
 html:not([data-theme])
   .grid.grid-cols-7.gap-1.text-center.text-\[11px\].text-gray-300.mb-1
   > :first-child,
@@ -401,28 +439,26 @@ html[data-theme="dark"]
    8) 전체교번 카드
    ============================== */
 
-/* 색상 지정이 안 된 사람(:not)에게만 테마 배경색 강제 적용 */
 html:not([data-theme]) .bg-gray-700\/80:not(.roster-person-colored),
 html[data-theme="light"] .bg-gray-700\/80:not(.roster-person-colored) {
   background-color: var(--cell-bg) !important;
   border-radius: 12px !important;
-  box-shadow: var(--shadow-card) !important;
+  box-shadow: var(--shadow-cell) !important;
 }
 
 html[data-theme="dark"] .bg-gray-700\/80:not(.roster-person-colored) {
-  background-color: var(--card-soft-alt) !important;
+  background-color: var(--cell-bg) !important;
   border-radius: 12px !important;
-  box-shadow: var(--shadow-card) !important;
+  box-shadow: var(--shadow-cell) !important;
 }
 
 .ring-white\/80 {
   --tw-ring-color: var(--accent) !important;
 }
 
-/* 색 지정된 사람 */
 .roster-person-colored {
   border-radius: 12px !important;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25), var(--stroke-card) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18), var(--stroke-card) !important;
   transform: translateY(-1px);
 }
 
@@ -434,25 +470,17 @@ html[data-theme="dark"] .bg-gray-700\/80:not(.roster-person-colored) {
 }
 
 /* ==============================
-   9) 탭바 — 진짜 iOS 유리 소재
+   9) 탭바 — 완전 단색, 배경과 동일 + 카드와 살짝 구분되는 위쪽 선
    ============================== */
 
 html:not([data-theme]) .bg-gray-900\/90,
-html[data-theme="light"] .bg-gray-900\/90 {
-  background-color: var(--tabbar-bg) !important;
-  background-image: none !important;
-  backdrop-filter: saturate(180%) blur(25px);
-  -webkit-backdrop-filter: saturate(180%) blur(25px);
-  border-top: 0.5px solid var(--tabbar-sep);
-  box-shadow: none !important;
-}
-
+html[data-theme="light"] .bg-gray-900\/90,
 html[data-theme="dark"] .bg-gray-900\/90 {
   background-color: var(--tabbar-bg) !important;
   background-image: none !important;
-  backdrop-filter: saturate(180%) blur(25px);
-  -webkit-backdrop-filter: saturate(180%) blur(25px);
-  border-top: 0.5px solid var(--tabbar-sep);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-top: 0.5px solid var(--tabbar-sep) !important;
   box-shadow: none !important;
 }
 
@@ -471,8 +499,6 @@ html[data-theme="dark"] .bg-gray-900\/90 {
   bottom: calc(-1.5 * env(safe-area-inset-bottom));
   height: calc(1.5 * env(safe-area-inset-bottom));
   background-color: var(--tabbar-bg);
-  backdrop-filter: blur(25px);
-  -webkit-backdrop-filter: blur(25px);
   z-index: -1;
 }
 
@@ -488,6 +514,12 @@ html:not([data-theme]) input[type="number"],
 html[data-theme="light"] input[type="number"],
 html:not([data-theme]) input[type="text"],
 html[data-theme="light"] input[type="text"],
+html:not([data-theme]) input[type="tel"],
+html[data-theme="light"] input[type="tel"],
+html:not([data-theme]) input[type="search"],
+html[data-theme="light"] input[type="search"],
+html:not([data-theme]) input:not([type]),
+html[data-theme="light"] input:not([type]),
 html:not([data-theme]) select,
 html[data-theme="light"] select,
 html:not([data-theme]) textarea,
@@ -504,13 +536,17 @@ html[data-theme="light"] textarea {
 html:not([data-theme]) input:focus,
 html[data-theme="light"] input:focus,
 html:not([data-theme]) select:focus,
-html[data-theme="light"] select:focus {
+html[data-theme="light"] select:focus,
+html:not([data-theme]) textarea:focus,
+html[data-theme="light"] textarea:focus {
   outline: none;
   box-shadow: inset 0 0 0 0.5px var(--accent), 0 0 0 2px rgba(0, 122, 255, 0.2);
 }
 
 html:not([data-theme]) input::placeholder,
-html[data-theme="light"] input::placeholder {
+html[data-theme="light"] input::placeholder,
+html:not([data-theme]) textarea::placeholder,
+html[data-theme="light"] textarea::placeholder {
   color: var(--text-muted);
 }
 
@@ -518,6 +554,9 @@ html[data-theme="dark"] input[type="date"],
 html[data-theme="dark"] input[type="month"],
 html[data-theme="dark"] input[type="number"],
 html[data-theme="dark"] input[type="text"],
+html[data-theme="dark"] input[type="tel"],
+html[data-theme="dark"] input[type="search"],
+html[data-theme="dark"] input:not([type]),
 html[data-theme="dark"] select,
 html[data-theme="dark"] textarea {
   background-color: var(--card-inner) !important;
@@ -530,9 +569,15 @@ html[data-theme="dark"] textarea {
 }
 
 html[data-theme="dark"] input:focus,
-html[data-theme="dark"] select:focus {
+html[data-theme="dark"] select:focus,
+html[data-theme="dark"] textarea:focus {
   outline: none;
   box-shadow: inset 0 0 0 0.5px var(--accent), 0 0 0 2px rgba(10, 132, 255, 0.3);
+}
+
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: var(--text-muted);
 }
 
 /* ==============================
@@ -586,7 +631,9 @@ html[data-theme="light"] .bg-orange-600 {
 }
 
 html:not([data-theme]) .bg-emerald-600,
-html[data-theme="light"] .bg-emerald-600 {
+html[data-theme="light"] .bg-emerald-600,
+html:not([data-theme]) .bg-green-600,
+html[data-theme="light"] .bg-green-600 {
   background-color: var(--accent-green) !important;
   color: #ffffff !important;
   border: none !important;
@@ -599,6 +646,14 @@ html[data-theme="light"] .bg-pink-600 {
   color: #ff2d55 !important;
   border: none !important;
   box-shadow: none !important;
+}
+
+html:not([data-theme]) .bg-amber-500,
+html[data-theme="light"] .bg-amber-500 {
+  background-color: var(--accent-orange) !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(255, 149, 0, 0.3) !important;
 }
 
 /* ==============================
@@ -637,7 +692,8 @@ html[data-theme="dark"] .bg-orange-700 {
   box-shadow: none !important;
 }
 
-html[data-theme="dark"] .bg-emerald-600 {
+html[data-theme="dark"] .bg-emerald-600,
+html[data-theme="dark"] .bg-green-600 {
   background-color: var(--accent-green) !important;
   color: #ffffff !important;
   border: none !important;
@@ -650,6 +706,12 @@ html[data-theme="dark"] .bg-pink-600 {
   border: none !important;
 }
 
+html[data-theme="dark"] .bg-amber-500 {
+  background-color: var(--accent-orange) !important;
+  color: #1c1c1e !important;
+  border: none !important;
+}
+
 /* ==============================
    13) 비교 탭 야간/주간
    ============================== */
@@ -658,34 +720,34 @@ html:not([data-theme]) .bg-sky-500\/30,
 html[data-theme="light"] .bg-sky-500\/30 {
   background: linear-gradient(
     135deg,
-    rgba(0, 122, 255, 0.12),
-    rgba(0, 122, 255, 0.05)
+    rgba(0, 122, 255, 0.14),
+    rgba(0, 122, 255, 0.06)
   ) !important;
   border: none !important;
-  border-left: 3px solid var(--accent) !important;
+  border-left: none !important;
 }
 
 html[data-theme="dark"] .bg-sky-500\/30 {
-  background: rgba(10, 132, 255, 0.12) !important;
+  background: rgba(10, 132, 255, 0.18) !important;
   border: none !important;
-  border-left: 3px solid var(--accent) !important;
+  border-left: none !important;
 }
 
 html:not([data-theme]) .bg-yellow-500\/30,
 html[data-theme="light"] .bg-yellow-500\/30 {
   background: linear-gradient(
     135deg,
-    rgba(255, 149, 0, 0.12),
-    rgba(255, 204, 0, 0.06)
+    rgba(255, 149, 0, 0.14),
+    rgba(255, 204, 0, 0.07)
   ) !important;
   border: none !important;
-  border-left: 3px solid var(--accent-orange) !important;
+  border-left: none !important;
 }
 
 html[data-theme="dark"] .bg-yellow-500\/30 {
-  background: rgba(255, 214, 10, 0.1) !important;
+  background: rgba(255, 214, 10, 0.14) !important;
   border: none !important;
-  border-left: 3px solid var(--accent-yellow) !important;
+  border-left: none !important;
 }
 
 /* ==============================
@@ -713,7 +775,6 @@ html[data-theme="dark"] .pin-dot {
   background-color: #ffffff !important;
 }
 
-/* 키패드 블록: iOS 잠금화면처럼 플랫하고 심플하게 */
 html:not([data-theme]) .pin-key,
 html[data-theme="light"] .pin-key {
   background: #ffffff !important;
@@ -749,14 +810,70 @@ html[data-theme="dark"] .text-amber-300 {
   font-weight: 600;
 }
 
-/* 라이트: 설정 패널 내부 카드 - 외부 컨테이너와 명확한 구분 */
 html:not([data-theme]) .bg-gray-900\/60,
 html[data-theme="light"] .bg-gray-900\/60,
 html:not([data-theme]) .bg-gray-900\/70,
-html[data-theme="light"] .bg-gray-900\/70 {
+html[data-theme="light"] .bg-gray-900\/70,
+html:not([data-theme]) .bg-gray-900\/80,
+html[data-theme="light"] .bg-gray-900\/80 {
   background-color: var(--card-soft-alt) !important;
   border-radius: 12px !important;
-  box-shadow: var(--shadow-card) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+html[data-theme="dark"] .bg-gray-900\/60,
+html[data-theme="dark"] .bg-gray-900\/70,
+html[data-theme="dark"] .bg-gray-900\/80 {
+  background-color: var(--card-soft-alt) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+/* ==============================
+   16) 인원·그룹 관리 패널
+   ============================== */
+
+html:not([data-theme]) .bg-amber-900\/30,
+html[data-theme="light"] .bg-amber-900\/30 {
+  background-color: rgba(255, 149, 0, 0.1) !important;
+}
+html[data-theme="dark"] .bg-amber-900\/30 {
+  background-color: rgba(255, 159, 10, 0.15) !important;
+}
+
+html:not([data-theme]) .border-amber-500\/40,
+html[data-theme="light"] .border-amber-500\/40,
+html:not([data-theme]) .border-amber-500\/50,
+html[data-theme="light"] .border-amber-500\/50,
+html:not([data-theme]) .ring-amber-500\/50,
+html[data-theme="light"] .ring-amber-500\/50,
+html:not([data-theme]) .ring-amber-500\/60,
+html[data-theme="light"] .ring-amber-500\/60 {
+  border-color: rgba(255, 149, 0, 0.45) !important;
+  --tw-ring-color: rgba(255, 149, 0, 0.45) !important;
+}
+
+html:not([data-theme]) .bg-red-950\/30,
+html[data-theme="light"] .bg-red-950\/30 {
+  background-color: rgba(255, 59, 48, 0.06) !important;
+}
+html[data-theme="dark"] .bg-red-950\/30 {
+  background-color: rgba(255, 69, 58, 0.1) !important;
+}
+
+html:not([data-theme]) .border-red-800\/50,
+html[data-theme="light"] .border-red-800\/50 {
+  border-color: rgba(255, 59, 48, 0.35) !important;
+}
+html[data-theme="dark"] .border-red-800\/50 {
+  border-color: rgba(255, 69, 58, 0.4) !important;
+}
+
+html:not([data-theme]) .text-red-300,
+html[data-theme="light"] .text-red-300,
+html:not([data-theme]) .text-red-300\/80,
+html[data-theme="light"] .text-red-300\/80 {
+  color: var(--accent-red) !important;
 }
 
 @media (max-width: 640px) {
