@@ -66,11 +66,6 @@ export function getPathFolder(depot, code, dateStr, holidaySet = new Set()) {
   return `${todayType}_${nextType}`;
 }
 
-/**
- * 기존 시그니처 유지(동기): paths 직접 조회
- * v3에서는 entry가 sentinel(true)일 수 있음 → 이 경우 null 반환
- *   (실제 URL은 별도로 getPathImageURL 사용)
- */
 export function getPathImage(
   paths,
   depot,
@@ -91,7 +86,7 @@ export function getPathImage(
 
   const tryGet = (f) => {
     const v = paths[f]?.[num];
-    if (typeof v === "string" && v.startsWith("data:")) return v; // v1 호환
+    if (typeof v === "string" && v.startsWith("data:")) return v;
     return null;
   };
 
@@ -104,7 +99,6 @@ export function getPathImage(
   return null;
 }
 
-/** 폴더 존재 여부만 확인 (v3 sentinel도 true로 간주) */
 function hasPathImage(paths, depot, code, dateStr, holidaySet = new Set()) {
   if (!paths || !code) return false;
   const s = (code || "").trim().toLowerCase().replace(/\s/g, "");
@@ -130,22 +124,9 @@ function hasPathImage(paths, depot, code, dateStr, holidaySet = new Set()) {
   return false;
 }
 
-// ─────────────────────────────────────────────
-//  RouteImageView — v5: 한손가락 스와이프(부모) + 두손가락 핀치/pan + 꾹눌러 셔틀 토글
-// ─────────────────────────────────────────────
-//
-//  제스처 설계:
-//   • 한 손가락 좌/우 스와이프 → 부모(swipeRouteP0) 가 처리해서 날짜 변경.
-//     (RouteImageView 는 scale === 1 이고 움직임이 감지되면 부모로 이벤트를 흘림)
-//   • 한 손가락 꾹 누르기 (600ms, 움직임 없을 때) → 셔틀 시간표 ↔ 행로표 토글.
-//   • 두 손가락 핀치 → 이미지 확대/축소 (0.5 ~ 4x). preventDefault 로 부모 차단.
-//   • scale > 1 에서 한 손가락 드래그 → pan (확대됐을 때만 활성).
-//   • 더블탭 → 1x ↔ 2x 토글.
-//   • 마우스 휠 → 커서 위치 중심 확대/축소 (데스크탑).
-
 export function RouteImageView({
-  paths, // common.paths
-  common, // CommonDepotData
+  paths,
+  common,
   depot,
   code,
   dateStr,
@@ -165,7 +146,7 @@ export function RouteImageView({
   const viewportRef = useRef(null);
 
   const gestureRef = useRef({
-    mode: null, // "pan" | "pinch" | null
+    mode: null,
     startX: 0,
     startY: 0,
     startPan: { x: 0, y: 0 },
@@ -184,9 +165,8 @@ export function RouteImageView({
   const LONG_PRESS_MS = 600;
   const DOUBLE_TAP_MS = 300;
   const DOUBLE_TAP_DIST = 30;
-  const MOVE_THRESHOLD = 8; // px — 이 이상 움직이면 탭/꾹누름 취소
+  const MOVE_THRESHOLD = 8;
 
-  // 날짜/코드 바뀌면 행로표로 복귀 + pan 초기화
   useEffect(() => {
     setAltView(false);
     setAsyncUrl(null);
@@ -225,7 +205,6 @@ export function RouteImageView({
     }
   }, [dateStr, code, depot, common, paths]);
 
-  // scale 이 1 로 돌아오면 pan 도 리셋
   useEffect(() => {
     if (scale <= 1.001) setPan({ x: 0, y: 0 });
   }, [scale]);
@@ -242,7 +221,6 @@ export function RouteImageView({
     ? (busImageSrc || "").replace(/^\//, "")
     : `${depot}/${folder}/${numKey}`;
 
-  // pan 경계 제한
   const clampPan = useCallback((px, py, s) => {
     const el = viewportRef.current;
     if (!el) return { x: px, y: py };
@@ -275,7 +253,6 @@ export function RouteImageView({
     };
   };
 
-  // anchor 중심 확대
   const zoomAtPoint = useCallback(
     (anchorLocal, oldScale, newScale) => {
       const el = viewportRef.current;
@@ -292,11 +269,6 @@ export function RouteImageView({
     [pan, clampPan]
   );
 
-  // ─────────────────────────────────────────
-  //  터치 핸들러
-  //  ※ 한 손가락 + scale===1 → 부모로 이벤트 흘리기 (e.preventDefault X)
-  //     그래야 swipeRouteP0 이 스와이프로 날짜 변경 가능.
-  // ─────────────────────────────────────────
   const onTouchStart = (e) => {
     if (noRoute) return;
     const g = gestureRef.current;
@@ -304,7 +276,6 @@ export function RouteImageView({
     g.longPressFired = false;
 
     if (e.touches.length === 2) {
-      // 핀치 시작 — 부모 이벤트 차단
       clearTimeout(g.longPressTimer);
       g.mode = "pinch";
       const info = getPinchInfo(e.touches);
@@ -319,11 +290,8 @@ export function RouteImageView({
       g.startX = t.clientX;
       g.startY = t.clientY;
       g.startPan = { ...pan };
-      // scale > 1 이면 즉시 pan 모드 (부모 스와이프 금지)
-      // scale === 1 이면 null — 부모가 스와이프 처리할 수 있게 이벤트 흘려보냄
       g.mode = scale > 1.001 ? "pan" : null;
 
-      // 꾹 누르기 → 셔틀 토글 (움직임 없을 때만, hasRoute 있을 때만 의미)
       if (hasRoute) {
         g.longPressTimer = setTimeout(() => {
           if (g.moved) return;
@@ -338,7 +306,6 @@ export function RouteImageView({
     if (noRoute) return;
     const g = gestureRef.current;
 
-    // 핀치 중이면 두 손가락만 처리
     if (e.touches.length === 2 && g.mode === "pinch") {
       e.preventDefault();
       e.stopPropagation();
@@ -375,7 +342,6 @@ export function RouteImageView({
       }
 
       if (g.mode === "pan") {
-        // 확대 상태 — pan 처리, 부모 이벤트 차단
         e.preventDefault();
         e.stopPropagation();
         if (!isDragging) setIsDragging(true);
@@ -383,7 +349,6 @@ export function RouteImageView({
         setPan(next);
         return;
       }
-      // scale === 1 & 한 손가락 → 이벤트 자연 전파 (부모가 스와이프 처리)
     }
   };
 
@@ -391,7 +356,6 @@ export function RouteImageView({
     const g = gestureRef.current;
     clearTimeout(g.longPressTimer);
 
-    // 핀치 종료
     if (g.mode === "pinch") {
       if (e.touches && e.touches.length === 1) {
         const t = e.touches[0];
@@ -406,7 +370,6 @@ export function RouteImageView({
       return;
     }
 
-    // 꾹 눌렀다면 이미 토글됐음 — 추가 처리 X
     if (g.longPressFired) {
       g.longPressFired = false;
       g.mode = null;
@@ -414,7 +377,6 @@ export function RouteImageView({
       return;
     }
 
-    // 더블탭 (움직임 없을 때만, 한 손가락 탭 완료)
     if (g.mode !== "pan" && !g.moved && e.changedTouches?.length === 1) {
       const t = e.changedTouches[0];
       const now = Date.now();
@@ -444,7 +406,6 @@ export function RouteImageView({
     setIsDragging(false);
   };
 
-  // 마우스 휠 (데스크탑)
   const onWheel = (e) => {
     if (noRoute) return;
     e.preventDefault();
@@ -456,7 +417,6 @@ export function RouteImageView({
     onScaleChange?.(Math.round(newScale * 100) / 100);
   };
 
-  // 마우스 드래그 pan (데스크탑)
   const mouseRef = useRef({ dragging: false, sx: 0, sy: 0, startPan: null });
   const onMouseDown = (e) => {
     if (noRoute) return;
@@ -485,7 +445,6 @@ export function RouteImageView({
     setIsDragging(false);
   };
 
-  // 로딩
   if (asyncLoading && !displaySrc) {
     return (
       <div className="mt-2 rounded-xl bg-gray-900/40 flex items-center justify-center aspect-[1/1.2] text-gray-400 text-sm">
@@ -506,13 +465,11 @@ export function RouteImageView({
   }
 
   return (
-    <div className="mt-2 rounded-xl overflow-hidden bg-black/30">
+    <div className="rounded-xl overflow-hidden bg-black/30">
       <div
         ref={viewportRef}
         className="relative w-full aspect-[1/1.414] overflow-hidden select-none"
         style={{
-          // 확대 상태에서만 브라우저 기본 제스처 차단.
-          // scale=1 에선 기본 허용해서 부모의 좌우 스와이프가 동작 가능하게 함.
           touchAction: scale > 1.001 ? "none" : "pan-x pan-y",
           cursor:
             scale > 1.001 ? (isDragging ? "grabbing" : "grab") : "default",
@@ -530,7 +487,7 @@ export function RouteImageView({
         <img
           src={displaySrc}
           alt={showBus ? "버스시간표" : `행로표-${code}`}
-          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
           draggable={false}
           style={{
             transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`,
@@ -542,7 +499,7 @@ export function RouteImageView({
           }}
         />
 
-        {/* 상단 우측 컨트롤 — 배율 버튼 + 현재 뷰 라벨 (탭 불가, 표시만) */}
+        {/* 상단 우측 컨트롤 */}
         <div className="absolute top-2 right-2 flex items-center gap-1">
           {onScaleChange && !showBus && (
             <div className="flex items-center gap-0.5 rounded-lg bg-gray-900/80 text-white overflow-hidden">
@@ -606,14 +563,17 @@ export function RouteImageView({
           </div>
         </div>
 
+        {/* 하단 라벨 — 이미지 위에 오버레이로 (카드 공간은 차지하지 않음) */}
+        <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded-md text-[9px] bg-gray-900/70 text-gray-300 whitespace-nowrap pointer-events-none">
+          {matchLabel}
+        </div>
+
         {!noRoute && scale <= 1.001 && (
-          <div className="absolute bottom-0 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded-md text-[8px] bg-gray-900/70 text-white whitespace-nowrap">
+          <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-md text-[8px] bg-gray-900/70 text-white whitespace-nowrap pointer-events-none">
             길게 눌러 {showBus ? "행로표" : "셔틀 시간"} · 두 손가락 확대
           </div>
         )}
       </div>
-
-      <div className="text-xs text-gray-500 mt-1 px-1">{matchLabel}</div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// src/SettingsView.jsx  (v2)
+// src/SettingsView.jsx  (v3)
 import React from "react";
 import {
   Settings as SettingsIcon,
@@ -23,8 +23,7 @@ export default function SettingsView(props) {
     myName,
     setMyNameForDepot,
     nameList,
-    anchorDateStr,
-    setAnchorDateStr,
+    // anchorDateStr / setAnchorDateStr — 기준일 UI 제거됨, 자동으로 오늘 사용
     holidaysText,
     setHolidaysText,
     newHolidayDate,
@@ -47,7 +46,6 @@ export default function SettingsView(props) {
     setTheme,
     onOpenSetupWizard,
     onResetAll,
-    // ─── 새 props ───
     commonMap,
     setCommonMap,
     peopleRows,
@@ -65,7 +63,6 @@ export default function SettingsView(props) {
     "#94a3b8",
   ];
 
-  // ZIP 업로드 상태
   const [zipLoading, setZipLoading] = React.useState(false);
   const [zipProgress, setZipProgress] = React.useState({
     loaded: 0,
@@ -75,17 +72,66 @@ export default function SettingsView(props) {
   const [zipError, setZipError] = React.useState("");
   const [zipDoneMsg, setZipDoneMsg] = React.useState("");
 
-  // 이름 편집 상태
   const [editModeOn, setEditModeOn] = React.useState(false);
   const [editingIdx, setEditingIdx] = React.useState(-1);
-  const [editField, setEditField] = React.useState(null); // "name" | "phone"
+  const [editField, setEditField] = React.useState(null);
   const [editValue, setEditValue] = React.useState("");
 
-  // 공휴일 자동 로딩
+  // 인원 편집 정렬 모드: "seq" | "dia" | "name"
+  const [personSortMode, setPersonSortMode] = React.useState("seq");
+
+  // 정렬된 인원 목록 — 원본 인덱스(origIdx)를 함께 보관해서
+  // 편집/저장은 여전히 peopleRows 의 원본 순번 기준으로 동작하도록 함.
+  const sortedPeople = React.useMemo(() => {
+    const list = (peopleRows || []).map((row, origIdx) => ({ row, origIdx }));
+    if (personSortMode === "name") {
+      return list.sort((a, b) =>
+        String(a.row?.name || "").localeCompare(
+          String(b.row?.name || ""),
+          "ko"
+        )
+      );
+    }
+    if (personSortMode === "dia") {
+      // DIA 정렬 우선순위:
+      //  1) 숫자 DIA (작은 숫자부터)
+      //  2) 대N (숫자 오름차순)
+      //  3) 주 / 야
+      //  4) 비번/비/N~ (비번류)
+      //  5) 휴 / 휴가 / 교육
+      //  6) 기타
+      const rankOf = (dia) => {
+        if (dia == null || dia === "") return [9999, 0, ""];
+        if (typeof dia === "number") return [0, dia, ""];
+        const s = String(dia).replace(/\s+/g, "");
+        if (/^\d+$/.test(s)) return [0, Number(s), ""];
+        if (/^대\d+$/.test(s)) return [1, Number(s.replace(/\D/g, "")), s];
+        if (s === "주") return [2, 0, s];
+        if (s === "야") return [2, 1, s];
+        if (s.includes("비") || s.endsWith("~")) return [3, 0, s];
+        if (s.startsWith("휴") || s === "휴가" || s === "교육")
+          return [4, 0, s];
+        return [5, 0, s];
+      };
+      return list.sort((a, b) => {
+        const [ra, va, sa] = rankOf(a.row?.dia);
+        const [rb, vb, sb] = rankOf(b.row?.dia);
+        if (ra !== rb) return ra - rb;
+        if (va !== vb) return va - vb;
+        if (sa !== sb) return String(sa).localeCompare(String(sb));
+        return String(a.row?.name || "").localeCompare(
+          String(b.row?.name || ""),
+          "ko"
+        );
+      });
+    }
+    // "seq" — 원래 순번 그대로
+    return list;
+  }, [peopleRows, personSortMode]);
+
   const [holidayLoading, setHolidayLoading] = React.useState(false);
   const [holidayMsg, setHolidayMsg] = React.useState("");
 
-  // TSV 등록 펼침
   const [tsvOpen, setTsvOpen] = React.useState(false);
 
   const normalizeHolidays = (text) => {
@@ -98,9 +144,6 @@ export default function SettingsView(props) {
     return [...set].sort().join("\n");
   };
 
-  // ─────────────────────────────────────────
-  //  ZIP 직접 업로드 (Settings 안에서 바로)
-  // ─────────────────────────────────────────
   async function handleZipUploadInSettings(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -128,9 +171,6 @@ export default function SettingsView(props) {
     }
   }
 
-  // ─────────────────────────────────────────
-  //  이름/전화번호 편집
-  // ─────────────────────────────────────────
   const beginEdit = (idx, field, currentValue) => {
     setEditingIdx(idx);
     setEditField(field);
@@ -143,10 +183,21 @@ export default function SettingsView(props) {
     setEditValue("");
   };
 
+  // ─────────────────────────────────────────
+  //  이름/전화번호 편집 커밋
+  //  이름 변경 시:
+  //   - 새 이름이 기존에 없음 → 단순 개명
+  //   - 새 이름이 기존에 있음 → 스왑할지 confirm 물어보기
+  // ─────────────────────────────────────────
   const commitEdit = async () => {
     if (editingIdx < 0 || !editField) return;
     const newVal = editValue.trim();
     const oldRow = peopleRows?.[editingIdx];
+
+    const norm = (s) =>
+      String(s || "")
+        .replace(/\s+/g, "")
+        .toLowerCase();
 
     if (editField === "name") {
       const oldName = oldRow?.name || "";
@@ -156,20 +207,128 @@ export default function SettingsView(props) {
       }
 
       const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
-      if (commonMap?.[key]?.names?.length) {
-        const newNames = [...commonMap[key].names];
+      const common = commonMap?.[key];
+      if (!common?.names?.length) {
+        cancelEdit();
+        return;
+      }
+
+      const newKey = norm(newVal);
+      const oldKey = norm(oldName);
+
+      // 같은 이름(공백/대소문자만 다름) → 표기만 정리
+      if (newKey === oldKey) {
+        const newNames = [...common.names];
         newNames[editingIdx] = newVal;
+        const nextMap = { ...commonMap, [key]: { ...common, names: newNames } };
+        setCommonMap?.(nextMap);
+        try {
+          await saveCommonDataToDB(nextMap);
+        } catch {}
+        // TSV 동기화
+        try {
+          const lines = (currentTableText || "").split(/\r?\n/);
+          if (lines.length > editingIdx + 1) {
+            const cols = lines[editingIdx + 1].split("\t");
+            if (cols.length >= 2) {
+              cols[1] = newVal;
+              lines[editingIdx + 1] = cols.join("\t");
+              setTablesByDepot?.((prev) => ({
+                ...(prev || {}),
+                [selectedDepot]: lines.join("\n"),
+              }));
+            }
+          }
+        } catch {}
+        cancelEdit();
+        return;
+      }
+
+      // 새 이름이 이미 다른 자리에 존재하는지 확인 (editingIdx 제외)
+      const swapCandidates = common.names
+        .map((n, i) => ({ n, i }))
+        .filter((x) => norm(x.n) === newKey && x.i !== editingIdx);
+
+      if (swapCandidates.length > 1) {
+        alert(
+          `"${newVal}" 이름을 가진 사람이 여러 명 있습니다.\n자리 교환 대상을 특정할 수 없습니다.`
+        );
+        cancelEdit();
+        return;
+      }
+
+      if (swapCandidates.length === 1) {
+        // 스왑 확인
+        const swapIdx = swapCandidates[0].i;
+        const swapName = common.names[swapIdx];
+        const ok = window.confirm(
+          `"${newVal}" 은(는) 이미 다른 자리에 있는 사람입니다.\n\n` +
+            `"${oldName}" ↔ "${swapName}" 두 사람의 자리를 서로 바꾸시겠습니까?\n\n` +
+            `교번도 함께 바뀝니다.`
+        );
+        if (!ok) {
+          cancelEdit();
+          return;
+        }
+
+        // 이름 swap
+        const newNames = [...common.names];
+        newNames[editingIdx] = swapName;
+        newNames[swapIdx] = oldName;
+
+        // 전화번호도 함께 swap
+        const oldPhones = common.phones || [];
+        const newPhones = [...oldPhones];
+        if (oldPhones.length === common.names.length) {
+          newPhones[editingIdx] = oldPhones[swapIdx] || "";
+          newPhones[swapIdx] = oldPhones[editingIdx] || "";
+        }
+
         const nextMap = {
           ...commonMap,
-          [key]: { ...commonMap[key], names: newNames },
+          [key]: { ...common, names: newNames, phones: newPhones },
         };
         setCommonMap?.(nextMap);
         try {
           await saveCommonDataToDB(nextMap);
         } catch {}
+
+        // TSV 동기화
+        try {
+          const lines = (currentTableText || "").split(/\r?\n/);
+          const aLine = editingIdx + 1;
+          const bLine = swapIdx + 1;
+          if (lines.length > Math.max(aLine, bLine)) {
+            const aCols = lines[aLine].split("\t");
+            const bCols = lines[bLine].split("\t");
+            if (aCols.length >= 2 && bCols.length >= 2) {
+              const tmp = aCols[1];
+              aCols[1] = bCols[1];
+              bCols[1] = tmp;
+              lines[aLine] = aCols.join("\t");
+              lines[bLine] = bCols.join("\t");
+              setTablesByDepot?.((prev) => ({
+                ...(prev || {}),
+                [selectedDepot]: lines.join("\n"),
+              }));
+            }
+          }
+        } catch {}
+
+        cancelEdit();
+        return;
       }
 
-      // TSV 텍스트 동기화
+      // 새 이름 (기존에 없음) — 단순 개명
+      const newNames = [...common.names];
+      newNames[editingIdx] = newVal;
+      const nextMap = { ...commonMap, [key]: { ...common, names: newNames } };
+      setCommonMap?.(nextMap);
+      try {
+        await saveCommonDataToDB(nextMap);
+      } catch {}
+
+      // TSV 동기화
       try {
         const lines = (currentTableText || "").split(/\r?\n/);
         if (lines.length > editingIdx + 1) {
@@ -217,9 +376,6 @@ export default function SettingsView(props) {
     cancelEdit();
   };
 
-  // ─────────────────────────────────────────
-  //  한국 공휴일 자동 등록
-  // ─────────────────────────────────────────
   const autoLoadKoreanHolidays = async () => {
     setHolidayLoading(true);
     setHolidayMsg("");
@@ -425,7 +581,7 @@ export default function SettingsView(props) {
               ))}
             </select>
 
-            {/* ─── 인원 편집 (이름+전화번호, 교번/시간 함께 표시) ─── */}
+            {/* ─── 인원 편집 ─── */}
             <div className="mt-5 p-4 rounded-2xl bg-gray-900/60 border border-gray-700/40">
               <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                 <label className="text-sm font-semibold text-gray-200 flex items-center gap-1">
@@ -436,7 +592,22 @@ export default function SettingsView(props) {
                   <span className="text-[11px] text-gray-400">
                     {peopleRows?.length || 0}명
                   </span>
-                  {/* 마스터 토글 */}
+                  <button
+                    onClick={() => {
+                      setPersonSortMode((m) =>
+                        m === "seq" ? "dia" : m === "dia" ? "name" : "seq"
+                      );
+                      cancelEdit();
+                    }}
+                    className="px-3 py-1 rounded-lg text-[11px] font-semibold bg-cyan-600 hover:bg-cyan-500 text-white transition"
+                    title="정렬 방식 변경"
+                  >
+                    {personSortMode === "seq"
+                      ? "순번 ↓"
+                      : personSortMode === "dia"
+                      ? "DIA ↓"
+                      : "이름 ↓"}
+                  </button>
                   <button
                     onClick={() => {
                       setEditModeOn((v) => !v);
@@ -456,15 +627,15 @@ export default function SettingsView(props) {
               <p className="text-[11px] text-gray-400 mb-2 leading-relaxed">
                 {editModeOn ? (
                   <span className="text-amber-300">
-                    🔧 수정 모드 — 이름/전화번호를 눌러 변경하세요. 변경사항은
-                    <b> 다음날에도 그대로 유지</b>됩니다.
+                    🔧 수정 모드 — 이름/전화번호를 눌러 변경하세요. 입력 후{" "}
+                    <b>Enter 또는 ✓</b> 로 저장. 이미 존재하는 이름이면{" "}
+                    <b>자리 교환(스왑)</b>, 새 이름이면 <b>단순 개명</b>됩니다.
                   </span>
                 ) : (
                   <>인사이동·오타 수정·전화번호 추가 시 "수정 모드"를 켜세요.</>
                 )}
               </p>
 
-              {/* 리스트 헤더 */}
               {(peopleRows?.length || 0) > 0 && (
                 <div className="grid grid-cols-[28px_44px_1fr_120px] gap-2 px-1.5 pb-1 text-[10px] text-gray-500 border-b border-gray-700/50">
                   <span className="text-right">#</span>
@@ -475,7 +646,8 @@ export default function SettingsView(props) {
               )}
 
               <div className="max-h-[360px] overflow-y-auto pr-1 space-y-0.5 mt-1">
-                {(peopleRows || []).map((row, i) => {
+                {sortedPeople.map(({ row, origIdx }) => {
+                  const i = origIdx; // 편집/저장은 원본 인덱스 기준 유지
                   const editingName =
                     editModeOn && editingIdx === i && editField === "name";
                   const editingPhone =
@@ -489,9 +661,6 @@ export default function SettingsView(props) {
                       ? String(row.dia)
                       : String(row.dia);
 
-                  // 교번 색상 (worktime 기반 — threshold 폐기)
-                  //  오늘 weekday.out 이 비어있으면 야간, 비어있지 않고 숫자 dia 이면 주간
-                  //  ~ 로 끝나는 비번 자리, 휴/비 라벨은 회색
                   let diaColor = "text-gray-300";
                   const diaStr = String(row?.dia || "").replace(/\s/g, "");
                   if (typeof row?.dia === "string") {
@@ -506,10 +675,9 @@ export default function SettingsView(props) {
                   } else if (typeof row?.dia === "number") {
                     const outEmpty = !row?.weekday?.out;
                     const inEmpty = !row?.weekday?.in;
-                    if (inEmpty && !outEmpty)
-                      diaColor = "text-gray-400"; // 비번 자리
-                    else if (outEmpty) diaColor = "text-sky-300"; // 야간
-                    else diaColor = "text-yellow-300"; // 주간
+                    if (inEmpty && !outEmpty) diaColor = "text-gray-400";
+                    else if (outEmpty) diaColor = "text-sky-300";
+                    else diaColor = "text-yellow-300";
                   }
 
                   return (
@@ -531,19 +699,35 @@ export default function SettingsView(props) {
                         {diaLabel}
                       </span>
 
-                      {/* 이름 칸 */}
                       {editingName ? (
-                        <input
-                          autoFocus
-                          className="bg-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-100 outline-none focus:ring-1 focus:ring-amber-400"
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") commitEdit();
-                            if (e.key === "Escape") cancelEdit();
-                          }}
-                          onBlur={() => commitEdit()}
-                        />
+                        <div className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            className="flex-1 min-w-0 bg-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-100 outline-none focus:ring-1 focus:ring-amber-400"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.nativeEvent.isComposing) commitEdit();
+                              if (e.key === "Escape") cancelEdit();
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onPointerDown={(e) => e.preventDefault()}
+                            onClick={commitEdit}
+                            className="px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-semibold"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            type="button"
+                            onPointerDown={(e) => e.preventDefault()}
+                            onClick={cancelEdit}
+                            className="px-1.5 py-0.5 rounded bg-gray-600 text-gray-100 text-[10px]"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       ) : (
                         <span
                           className={
@@ -562,21 +746,37 @@ export default function SettingsView(props) {
                         </span>
                       )}
 
-                      {/* 전화번호 칸 */}
                       {editingPhone ? (
-                        <input
-                          autoFocus
-                          type="tel"
-                          className="bg-gray-700 rounded px-1.5 py-0.5 text-[11px] text-gray-100 outline-none focus:ring-1 focus:ring-amber-400"
-                          placeholder="010-..."
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") commitEdit();
-                            if (e.key === "Escape") cancelEdit();
-                          }}
-                          onBlur={() => commitEdit()}
-                        />
+                        <div className="flex items-center gap-1">
+                          <input
+                            autoFocus
+                            type="tel"
+                            className="flex-1 min-w-0 bg-gray-700 rounded px-1.5 py-0.5 text-[11px] text-gray-100 outline-none focus:ring-1 focus:ring-amber-400"
+                            placeholder="010-..."
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitEdit();
+                              if (e.key === "Escape") cancelEdit();
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onPointerDown={(e) => e.preventDefault()}
+                            onClick={commitEdit}
+                            className="px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-semibold"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            type="button"
+                            onPointerDown={(e) => e.preventDefault()}
+                            onClick={cancelEdit}
+                            className="px-1.5 py-0.5 rounded bg-gray-600 text-gray-100 text-[10px]"
+                          >
+                            ✕
+                          </button>
+                        </div>
                       ) : (
                         <span
                           className={
@@ -605,37 +805,10 @@ export default function SettingsView(props) {
               </div>
             </div>
 
-            {/* 기준일 */}
-            <div className="mt-5 px-3 py-4 w-full box-border rounded-2xl bg-gray-900/60 shadow-inner border border-gray-700/40">
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-gray-200">
-                  {selectedDepot ? `${selectedDepot} 기준일` : "기준일"}
-                  <span className="ml-2 text-xs text-gray-400">
-                    {anchorDateStr ? `현재: ${anchorDateStr}` : "(미설정)"}
-                  </span>
-                </label>
-                {selectedDepot === "교대" && (
-                  <span className="text-xs text-amber-300">
-                    교대는 9월 29일로 하세요
-                  </span>
-                )}
-              </div>
-              <div className="relative rounded-xl overflow-hidden bg-gray-700 focus-within:ring-2 focus-within:ring-cyan-500">
-                <input
-                  type="date"
-                  className="block w-full max-w-full min-w-0 bg-transparent px-3 py-2 text-sm text-gray-100 outline-none"
-                  value={anchorDateStr}
-                  onChange={(e) => setAnchorDateStr(e.target.value)}
-                />
-              </div>
-              <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-                기준일을 바꾸면 회전 기준이 변경됩니다.
-                <br />
-                <span className="text-gray-300">
-                  기준일 +1일 → 다음 순번, 기준일 -1일 → 이전 순번
-                </span>
-              </p>
-            </div>
+            {/*
+              기준일 UI 제거됨 — 자동으로 오늘(현재일) 기준으로 동작.
+              App.jsx 가 매일 anchor 를 오늘로 갱신하므로 UI 에서 건드릴 필요 없음.
+            */}
 
             {/* 공휴일 관리 */}
             <div className="mt-5 p-4 rounded-2xl bg-gray-900/60 shadow-inner border border-gray-700/40 text-sm">
@@ -865,7 +1038,7 @@ export default function SettingsView(props) {
           </div>
         </section>
 
-        {/* TSV 고급편집 (교대·교대(외) 전용 — ZIP 기지는 노출 안 함) */}
+        {/* TSV 고급편집 (교대·교대(외) 전용) */}
         {(selectedDepot === "교대" || selectedDepot === "교대(외)") && (
           <TsvEditorSection
             selectedDepot={selectedDepot}
@@ -901,8 +1074,8 @@ export default function SettingsView(props) {
           <p className="text-[11px] text-red-300/80 mb-3 leading-relaxed">
             아래 버튼을 누르면 <b>모든 저장 데이터가 영구 삭제</b>됩니다:
             <br />
-            ZIP 파일, 인원 정보, 기준일, 공휴일, 일일 변경사항, 강조 색상, 그룹
-            설정 등 모두. 초기화 후에는 설정 마법사가 다시 실행됩니다.
+            ZIP 파일, 인원 정보, 공휴일, 일일 변경사항, 강조 색상, 그룹 설정 등
+            모두. 초기화 후에는 설정 마법사가 다시 실행됩니다.
           </p>
           <button
             type="button"
@@ -917,18 +1090,6 @@ export default function SettingsView(props) {
   );
 }
 
-/**
- * TsvEditorSection
- * ──────────────────────────────────────────────
- * 교대 / 교대(외) 용 TSV 편집기.
- *
- * 핵심 설계:
- *  - textarea 의 값은 **로컬 draft state** 로 관리 — 외부 tablesByDepot 가
- *    편집 도중 자동 갱신되더라도 커서/입력이 방해받지 않음.
- *  - "적용" 버튼을 눌러야만 setTablesByDepot 가 호출되어 commonMap 에 반영됨.
- *  - 외부 currentTableText 가 변하면 dirty 가 아닐 때만 draft 에 반영.
- *  - 소속을 바꾸면 draft 도 해당 소속 값으로 초기화.
- */
 function TsvEditorSection({
   selectedDepot,
   currentTableText,
@@ -941,15 +1102,12 @@ function TsvEditorSection({
   const [draft, setDraft] = React.useState(currentTableText || "");
   const [dirty, setDirty] = React.useState(false);
 
-  // 소속 변경 시 draft 동기화 (dirty 여부 무시 — 소속이 바뀌면 의미가 달라짐)
   React.useEffect(() => {
     setDraft(currentTableText || "");
     setDirty(false);
-    // selectedDepot 이 실제로 바뀌었을 때만 의미 있음
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDepot]);
 
-  // dirty 가 아닌 상태에서 외부가 바뀌면 draft 에 반영 (자동 회전 등)
   React.useEffect(() => {
     if (dirty) return;
     setDraft(currentTableText || "");
@@ -971,7 +1129,6 @@ function TsvEditorSection({
     setDirty(false);
   };
 
-  // CSV/TSV 업로드 — 파일 내용을 draft 에 넣고 dirty 로 표시 (즉시 적용 안 함)
   const handleFile = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;

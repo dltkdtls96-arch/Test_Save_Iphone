@@ -2353,12 +2353,18 @@ export default function App() {
         className="max-w-7xl mx-auto relative pb-0"
         style={{
           height: "100vh",
-          overflowY: selectedTab === "settings" ? "auto" : "hidden",
+          overflowY:
+            selectedTab === "settings" || selectedTab === "compare"
+              ? "auto"
+              : "hidden",
           overflowX: "hidden",
           WebkitOverflowScrolling: "touch",
           scrollbarWidth: "none",
           msOverflowStyle: "none",
-          touchAction: "manipulation",
+          touchAction: selectedTab === "compare" ? "pan-y" : "manipulation",
+          // compare 탭에서 아래 탭바에 가려지지 않도록 하단 패딩
+          paddingBottom:
+            selectedTab === "compare" ? "80px" : undefined,
         }}
       >
         {/* 홈 탭 */}
@@ -4064,9 +4070,9 @@ function FixedTabbarPortal({ children }) {
         mountRef.current
       )
     : null;
-}
-
-// CompareWeeklyBoard — commonMap 기반 row + 단일 야간 판정 (worktime)
+}// CompareWeeklyBoard — commonMap 기반 row + 단일 야간 판정 (worktime)
+// v2: 세로 스와이프 제거, 좌/우 스와이프로 "주 단위" 이동 (월 경계 자동 넘김)
+//     인원이 많으면 내부 영역 자체가 스크롤 가능
 function CompareWeeklyBoard({
   selectedDepot,
   selectedDate,
@@ -4099,7 +4105,6 @@ function CompareWeeklyBoard({
     for (const depot of DEPOTS) {
       const key = DEPOT_TO_ZIP_KEY[depot] || depot;
       const common = commonMap?.[key];
-      // commonMap 우선 (ZIP/TSV 모두) — weekdayNext 등 이어붙임 정보 포함해서 row 생성
       if (common?.names?.length && common?.gyobun?.length) {
         const splitWT = (wt) => {
           const s = String(wt || "").replace(/\s/g, "");
@@ -4147,12 +4152,8 @@ function CompareWeeklyBoard({
         };
         continue;
       }
-      // 폴백: TSV 파싱
       const text = tablesByDepot?.[depot] || "";
       const rows = parsePeopleTable(text);
-      // TSV 폴백에도 다음 자리 worktime 이어붙임 (교대/교대(외) 의 라벨 방식은
-      // computeInOut 이 라벨로 먼저 판정하므로 next 가 없어도 문제 없지만,
-      // 일관성을 위해 채워 둠)
       const len = rows.length;
       for (let i = 0; i < len; i++) {
         const nx = rows[(i + 1) % len];
@@ -4325,15 +4326,29 @@ function CompareWeeklyBoard({
       return nextGroups;
     });
   };
-  const weeks = React.useMemo(() => {
-    const days = monthGridMonday(selectedDate);
+
+  // ─────────────────────────────────────────
+  //  주(week) 계산 — 선택 날짜가 속한 주를 month-independent 로 추출
+  //  좌/우 스와이프 시 selectedDate 를 ±7 일 이동. 이 때 달이 자동으로 바뀜.
+  //  (monthGridMonday 는 헤더의 월 라벨 결정용으로만 사용, 데이터 그리드는
+  //   selectedDate 기준 "해당 주"만 렌더)
+  // ─────────────────────────────────────────
+  const currentWeekDays = React.useMemo(() => {
+    const d = stripTime(selectedDate);
+    const dow = (d.getDay() + 6) % 7; // 월=0, 일=6
+    const monday = new Date(d);
+    monday.setDate(d.getDate() - dow);
     const arr = [];
-    for (let i = 0; i < days.length; i += 7) arr.push(days.slice(i, i + 7));
+    for (let i = 0; i < 7; i++) {
+      const x = new Date(monday);
+      x.setDate(monday.getDate() + i);
+      arr.push(stripTime(x));
+    }
     return arr;
-  }, [selectedDate, monthGridMonday]);
+  }, [selectedDate]);
+
   const headerRef = React.useRef(null);
   const [headerH, setHeaderH] = React.useState(0);
-  const forceTopRef = React.useRef(false);
   React.useLayoutEffect(() => {
     const el = headerRef.current;
     if (!el) return;
@@ -4349,29 +4364,19 @@ function CompareWeeklyBoard({
       window.removeEventListener("resize", measure);
     };
   }, []);
-  const weekIndexOfSelected = React.useMemo(() => {
-    const sel = fmt(selectedDate);
-    const idx = weeks.findIndex((w) => w.some((d) => fmt(d) === sel));
-    return idx < 0 ? 0 : idx;
-  }, [weeks, selectedDate]);
-  const [weekPage, setWeekPage] = React.useState(weekIndexOfSelected);
-  React.useEffect(() => {
-    if (forceTopRef.current) {
-      forceTopRef.current = false;
-      return;
-    }
-    setWeekPage(weekIndexOfSelected);
-  }, [weekIndexOfSelected]);
+
+  // ─────────────────────────────────────────
+  //  좌/우 스와이프만 처리 — 헤더 영역에만 붙음
+  //  스크롤 영역은 완전 독립적으로 자연 스크롤
+  // ─────────────────────────────────────────
   const wrapRef = React.useRef(null);
   const [dragX, setDragX] = React.useState(0);
-  const [dragY, setDragY] = React.useState(0);
   const [snapping, setSnapping] = React.useState(false);
-  const gRef = React.useRef({ sx: 0, sy: 0, lock: null, lx: 0, ly: 0, t: 0 });
+  const gRef = React.useRef({ sx: 0, sy: 0, lock: null, lx: 0, t: 0 });
   const X_DIST = 40,
-    Y_DIST = 40,
     VEL = 0.35,
     SNAP_MS = 300;
-  const contentH = Math.max(160, slideViewportH - headerH - 8);
+
   const onTouchStart = (e) => {
     if (e.target.closest("[data-no-gesture]")) return;
     const t = e.touches[0];
@@ -4380,12 +4385,10 @@ function CompareWeeklyBoard({
       sy: t.clientY,
       lock: null,
       lx: t.clientX,
-      ly: t.clientY,
       t: performance.now(),
     };
     setSnapping(false);
     setDragX(0);
-    setDragY(0);
   };
   const onTouchMove = (e) => {
     if (e.target.closest("[data-no-gesture]")) return;
@@ -4393,94 +4396,69 @@ function CompareWeeklyBoard({
     const dx = t.clientX - gRef.current.sx,
       dy = t.clientY - gRef.current.sy;
     if (gRef.current.lock === null) {
-      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8)
+      // 가로 우세면 'h', 세로 우세면 'v' 로 lock.
+      // 본문 영역은 touchAction:pan-y 라 세로는 브라우저가 처리 → lock="v" 면 리턴.
+      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy))
         gRef.current.lock = "h";
-      else if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8)
+      else if (Math.abs(dy) > 8 && Math.abs(dy) >= Math.abs(dx))
         gRef.current.lock = "v";
     }
     if (gRef.current.lock === "h") {
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
       setDragX(dx);
-    } else if (gRef.current.lock === "v") {
-      e.preventDefault();
-      setDragY(dy);
+      gRef.current.lx = t.clientX;
+      gRef.current.t = performance.now();
     }
-    gRef.current.lx = t.clientX;
-    gRef.current.ly = t.clientY;
-    gRef.current.t = performance.now();
   };
   const onTouchEnd = (e) => {
-    if (e.target.closest("[data-no-gesture]")) return;
+    if (gRef.current.lock !== "h") {
+      gRef.current.lock = null;
+      setDragX(0);
+      return;
+    }
     const t = e.changedTouches[0];
     const now = performance.now(),
       dt = Math.max(1, now - gRef.current.t);
-    const vx = (t.clientX - gRef.current.lx) / dt,
-      vy = (t.clientY - gRef.current.ly) / dt;
-    if (gRef.current.lock === "h") {
-      const goNext = dragX < -X_DIST || vx < -VEL,
-        goPrev = dragX > X_DIST || vx > VEL;
-      setSnapping(true);
-      if (goNext) {
-        setDragX(-(wrapRef.current?.offsetWidth || 320));
-        setTimeout(() => {
-          forceTopRef.current = true;
-          setWeekPage(0);
-          setDragY(0);
-          setSelectedDate(addMonthsSafe(selectedDate, 1));
-          setDragX(0);
-          setSnapping(false);
-        }, SNAP_MS);
-      } else if (goPrev) {
-        setDragX(wrapRef.current?.offsetWidth || 320);
-        setTimeout(() => {
-          forceTopRef.current = true;
-          setWeekPage(0);
-          setDragY(0);
-          setSelectedDate(addMonthsSafe(selectedDate, -1));
-          setDragX(0);
-          setSnapping(false);
-        }, SNAP_MS);
-      } else {
+    const vx = (t.clientX - gRef.current.lx) / dt;
+    const goNext = dragX < -X_DIST || vx < -VEL;
+    const goPrev = dragX > X_DIST || vx > VEL;
+    const width = wrapRef.current?.offsetWidth || 320;
+    setSnapping(true);
+    if (goNext) {
+      setDragX(-width);
+      setTimeout(() => {
+        // 다음 주로 이동 (+7일) — 달 경계 자동 처리
+        setSelectedDate((prev) => {
+          const d = new Date(prev);
+          d.setDate(d.getDate() + 7);
+          return stripTime(d);
+        });
         setDragX(0);
-        setTimeout(() => setSnapping(false), SNAP_MS);
-      }
-    } else if (gRef.current.lock === "v") {
-      const goNext = dragY < -Y_DIST || vy < -VEL,
-        goPrev = dragY > Y_DIST || vy > VEL;
-      setSnapping(true);
-      if (goNext && weekPage < weeks.length - 1) {
-        setDragY(-contentH);
-        setTimeout(() => {
-          setWeekPage((p) => p + 1);
-          setDragY(0);
-          setSnapping(false);
-        }, SNAP_MS);
-      } else if (goPrev && weekPage > 0) {
-        setDragY(contentH);
-        setTimeout(() => {
-          setWeekPage((p) => p - 1);
-          setDragY(0);
-          setSnapping(false);
-        }, SNAP_MS);
-      } else {
-        setDragY(0);
-        setTimeout(() => setSnapping(false), SNAP_MS);
-      }
+        setSnapping(false);
+      }, SNAP_MS);
+    } else if (goPrev) {
+      setDragX(width);
+      setTimeout(() => {
+        setSelectedDate((prev) => {
+          const d = new Date(prev);
+          d.setDate(d.getDate() - 7);
+          return stripTime(d);
+        });
+        setDragX(0);
+        setSnapping(false);
+      }, SNAP_MS);
     } else {
       setDragX(0);
-      setDragY(0);
+      setTimeout(() => setSnapping(false), SNAP_MS);
     }
+    gRef.current.lock = null;
   };
+
   function jumpToToday() {
     const today = stripTime(new Date());
     setSelectedDate(today);
-    const md = monthGridMonday(today);
-    const wks = [];
-    for (let i = 0; i < md.length; i += 7) wks.push(md.slice(i, i + 7));
-    const idx = wks.findIndex((w) => w.some((d) => fmt(d) === fmt(today)));
-    setWeekPage(idx < 0 ? 0 : idx);
     setSnapping(true);
-    setDragY(0);
+    setDragX(0);
     setTimeout(() => setSnapping(false), 300);
   }
   const [pickerOpen, setPickerOpen] = React.useState(false);
@@ -4497,9 +4475,9 @@ function CompareWeeklyBoard({
           : true)
     );
   }, [parsedByDepot, pickerDepot, people, filterText]);
-  const NAME_COL_W = 80,
-    monthIdx = selectedDate.getMonth(),
-    displayedWeekDays = weeks[weekPage] || [];
+  const NAME_COL_W = 80;
+  const displayedWeekDays = currentWeekDays;
+  const monthIdx = selectedDate.getMonth();
   const todayISO = fmt(stripTime(new Date()));
   const isCurrentWeekHasToday = React.useMemo(
     () => displayedWeekDays.some((d) => fmt(d) === todayISO),
@@ -4509,9 +4487,13 @@ function CompareWeeklyBoard({
     if (!isCurrentWeekHasToday) return -1;
     return displayedWeekDays.findIndex((d) => fmt(d) === todayISO);
   }, [isCurrentWeekHasToday, displayedWeekDays, todayISO]);
-  const monthLabel = `${selectedDate.getFullYear()}.${String(
-    selectedDate.getMonth() + 1
+
+  // 이번 주가 두 달에 걸쳐있을 수 있으므로 "월 라벨"은 주의 중간 날짜 기준
+  const weekMidDate = displayedWeekDays[3] || selectedDate;
+  const monthLabel = `${weekMidDate.getFullYear()}.${String(
+    weekMidDate.getMonth() + 1
   ).padStart(2, "0")}`;
+
   function getContrastText(bg) {
     if (!bg) return "#fff";
     const c = bg.replace("#", "");
@@ -4521,41 +4503,22 @@ function CompareWeeklyBoard({
     const yiq = (r * 299 + g * 587 + b * 114) / 1000;
     return yiq >= 150 ? "#000" : "#fff";
   }
-  function isSCodeDay(v) {
-    return typeof v === "string" && /^s\s*[1-6]$/i.test(v.trim());
-  }
-  function hourFromStr(v) {
-    if (typeof v !== "string") return null;
-    const m = v.match(/^(\d{1,2})\s*:/);
-    return m ? Number(m[1]) : null;
-  }
-  const weekBodyRefs = React.useRef([]);
-  const [bodyH, setBodyH] = React.useState(0);
-  React.useLayoutEffect(() => {
-    const el = weekBodyRefs.current[weekPage];
-    if (!el) return;
-    const measure = () => setBodyH(el.offsetHeight || 0);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    window.addEventListener("resize", measure);
-    return () => {
-      try {
-        ro.disconnect();
-      } catch {}
-      window.removeEventListener("resize", measure);
-    };
-  }, [weekPage, people.length, weeks.length]);
-  const start = displayedWeekDays[0],
-    end = displayedWeekDays[displayedWeekDays.length - 1];
+
+  // 스크롤 영역 높이 = 뷰포트 - 헤더(요일 바) - 상단 툴바 - picker(열려있을 때) - 하단 안내
+  // 넉넉히 빼서 안전하게
+  const scrollAreaH = Math.max(
+    200,
+    slideViewportH - headerH - (pickerOpen ? 340 : 80) - 40
+  );
+
   return (
     <div
       ref={wrapRef}
-      className="bg-gray-800 rounded-2xl p-3 shadow mt-4 select-none overflow-hidden"
-      style={{ height: slideViewportH, touchAction: "manipulation" }}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
+      className="bg-gray-800 rounded-2xl p-3 shadow mt-4 select-none"
+      style={{
+        // height 제거 → 내용만큼 자라서 appRef 전체 스크롤로 흐르게
+        touchAction: "pan-y",
+      }}
     >
       <div
         className="mb-2 flex items-center justify-between gap-2 text-[11px] text-gray-300"
@@ -4604,8 +4567,7 @@ function CompareWeeklyBoard({
           >
             {pickerOpen ? "상단 접기" : "인원·그룹 관리"}
           </button>
-          {(fmt(selectedDate) !== todayISO ||
-            !displayedWeekDays.some((d) => fmt(d) === todayISO)) && (
+          {!isCurrentWeekHasToday && (
             <button
               className="px-2 py-1 rounded-xl bg-indigo-600 text-xs text-white"
               type="button"
@@ -4628,7 +4590,6 @@ function CompareWeeklyBoard({
             boxShadow: "var(--shadow-sm)",
           }}
         >
-          {/* ── 섹션 1: 그룹 선택 / 관리 ── */}
           <div className="p-3">
             <div
               className="text-[10px] font-semibold uppercase tracking-wider mb-2"
@@ -4637,7 +4598,6 @@ function CompareWeeklyBoard({
               그룹
             </div>
 
-            {/* 그룹 칩 리스트 */}
             <div className="flex flex-wrap gap-1.5 mb-2">
               {groups.map((g) => (
                 <button
@@ -4693,7 +4653,6 @@ function CompareWeeklyBoard({
               </button>
             </div>
 
-            {/* 그룹 액션 — 이름변경 / 삭제 */}
             {activeGroup && (
               <div className="flex items-center gap-1.5">
                 <button
@@ -4725,7 +4684,6 @@ function CompareWeeklyBoard({
               </div>
             )}
 
-            {/* 그룹 이름 편집 인풋 */}
             {editingGroupId && (
               <div className="mt-2 flex items-center gap-1.5">
                 <input
@@ -4789,7 +4747,6 @@ function CompareWeeklyBoard({
             )}
           </div>
 
-          {/* ── 섹션 2: 인원 추가 ── */}
           <div className="p-3" style={{ borderTop: "1px solid var(--border)" }}>
             <div
               className="text-[10px] font-semibold uppercase tracking-wider mb-2"
@@ -4798,7 +4755,6 @@ function CompareWeeklyBoard({
               인원 추가 {activeGroup ? `→ ${activeGroup.label}` : ""}
             </div>
 
-            {/* 소속 + 검색 */}
             <div className="flex items-center gap-2 mb-2">
               <select
                 className="px-2 py-1.5 text-[12px] rounded-lg"
@@ -4820,7 +4776,6 @@ function CompareWeeklyBoard({
               />
             </div>
 
-            {/* 선택 가능한 이름 그리드 */}
             {selectableNames.length > 0 ? (
               <div
                 className="grid gap-1"
@@ -4869,171 +4824,186 @@ function CompareWeeklyBoard({
           </div>
         </div>
       )}
-      <div className="relative mt-2" style={{ zIndex: 1 }}>
-        {todayColIndex >= 0 && (
-          <div
-            className="absolute pointer-events-none border-2 border-red-400 rounded-md"
-            style={{
-              top: 0,
-              left: `calc(${NAME_COL_W}px + ${todayColIndex} * ((100% - ${NAME_COL_W}px) / 7))`,
-              width: `calc((100% - ${NAME_COL_W}px) / 7)`,
-              height: headerH + bodyH,
-              zIndex: 4,
-            }}
-          />
-        )}
-        <div ref={headerRef} style={{ position: "relative", zIndex: 2 }}>
-          <div
-            className="grid rounded-t-xl overflow-hidden"
-            style={{
-              gridTemplateColumns: `${NAME_COL_W}px repeat(7, minmax(0,1fr))`,
-              pointerEvents: "none",
-            }}
-          >
-            <div className="bg-white-1000 px-1 py-4 text-[17px] font-semibold border-r border-gray-700">
-              <span>{monthLabel}</span>
-            </div>
-            {displayedWeekDays.map((d) => {
-              const dow = d.getDay(),
-                isoD = fmt(d),
-                outside = d.getMonth() !== monthIdx;
-              const color =
-                dow === 0
-                  ? "text-red-400"
-                  : dow === 6
-                  ? "text-blue-400"
-                  : "text-gray-100";
-              return (
-                <div
-                  key={isoD}
-                  className={
-                    "px-2 py-2 text-center text-sm font-semibold border-l border-gray-700 " +
-                    (outside ? "text-gray-500" : color)
-                  }
-                  title={fmtWithWeekday(d)}
-                >
-                  <div>{d.getDate()}</div>
-                  <div className="text-[11px] opacity-80">
-                    {["일", "월", "화", "수", "목", "금", "토"][dow]}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+
+      {/*
+        본문 구조:
+        - 헤더 + 인원 리스트를 하나의 transform 그룹으로 묶어 함께 translateX
+        - 헤더와 리스트 모두 가로 스와이프 감지
+        - 리스트는 pan-y 도 허용 (세로 스크롤은 appRef 로)
+      */}
+      <div
+        ref={headerRef}
+        className="relative"
+        style={{
+          zIndex: 2,
+          transform: `translateX(${dragX}px)`,
+          transition: snapping ? "transform 300ms ease-out" : "none",
+          willChange: "transform",
+          touchAction: "pan-x",
+        }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
         <div
-          className="relative"
+          className="grid rounded-t-xl overflow-hidden"
           style={{
-            height: contentH,
-            transform: `translateY(${
-              -weekPage * contentH + dragY
-            }px) translateX(${dragX}px)`,
-            transition: snapping ? "transform 300ms ease-out" : "none",
-            willChange: "transform",
-            zIndex: 1,
+            gridTemplateColumns: `${NAME_COL_W}px repeat(7, minmax(0,1fr))`,
           }}
         >
-          {weeks.map((weekDays, wi) => (
-            <div
-              key={"w" + wi}
-              className="pb-4"
-              style={{ minHeight: contentH }}
-            >
+          <div className="px-1 py-4 text-[17px] font-semibold border-r border-gray-700">
+            <span>{monthLabel}</span>
+          </div>
+          {displayedWeekDays.map((d) => {
+            const dow = d.getDay(),
+              isoD = fmt(d),
+              outside = d.getMonth() !== monthIdx;
+            const color =
+              dow === 0
+                ? "text-red-400"
+                : dow === 6
+                ? "text-blue-400"
+                : "text-gray-100";
+            return (
               <div
-                className="divide-y divide-gray-700 rounded-b-xl overflow-hidden"
-                ref={(el) => (weekBodyRefs.current[wi] = el)}
+                key={isoD}
+                className={
+                  "px-2 py-2 text-center text-sm font-semibold border-l border-gray-700 " +
+                  (outside ? "text-gray-500" : color)
+                }
+                title={fmtWithWeekday(d)}
               >
-                {people.map(({ name, depot }) => (
-                  <div
-                    key={`${depot}::${name}`}
-                    className="grid bg-gray-800/60 hover:bg-gray-800"
-                    style={{
-                      gridTemplateColumns: `${NAME_COL_W}px repeat(7, minmax(0,1fr))`,
-                    }}
-                  >
-                    <div className="px-2 py-1 border-r border-gray-700 flex items-center justify-between min-w-0">
-                      <div
-                        className="text-white font-semibold truncate text-[12px] min-w-0"
-                        title={`${depot} • ${name}`}
-                      >
-                        {name}
-                      </div>
-                      <button
-                        className="w-4 h-4 rounded-full bg-gray-700 hover:bg-gray-600 text-[10px] flex items-center justify-center flex-shrink-0 ml-0.5"
-                        onClick={() => removePerson(name, depot)}
-                        type="button"
-                      >
-                        −
-                      </button>
-                    </div>
-                    {weekDays.map((d) => {
-                      const row = rowAtDateFor(name, depot, d);
-                      const t = computeInOut(row, d, holidaySet);
-                      const dia =
-                        row?.dia === undefined
-                          ? "-"
-                          : typeof row.dia === "number"
-                          ? row.dia
-                          : String(row.dia).replace(/\s+/g, "");
-                      const diaLabel =
-                        row?.dia == null
-                          ? ""
-                          : String(row.dia).replace(/\s+/g, "");
-                      const finalLabel = isOverridden(name, depot, d)
-                        ? diaLabel
-                          ? `*${diaLabel}`
-                          : "*"
-                        : diaLabel || "-";
-                      const outside = d.getMonth() !== monthIdx;
-
-                      // 🌙 색상: computeInOut().isNight 하나로 통일 (worktime 기반)
-                      //   - 야간 → 하늘색 배경
-                      //   - 출/퇴근 시간이 있는 근무 → 노란색 배경
-                      //   - 휴/비번 → 회색 배경
-                      let bgColor = "bg-gray-800/60";
-                      const todayDiaStr = String(row?.dia || "").replace(
-                        /\s/g,
-                        ""
-                      );
-                      const isOff =
-                        !todayDiaStr ||
-                        todayDiaStr.startsWith("휴") ||
-                        todayDiaStr.includes("비번") ||
-                        todayDiaStr === "비" ||
-                        todayDiaStr.endsWith("~");
-                      if (!isOff) {
-                        const isTime = (v) =>
-                          typeof v === "string" &&
-                          /^\d{1,2}\s*:\s*\d{2}$/.test(v);
-                        const hasWork = isTime(t.in) || isTime(t.out);
-                        if (t.isNight) bgColor = "bg-sky-500/30";
-                        else if (hasWork) bgColor = "bg-yellow-500/30";
-                      }
-                      return (
-                        <div
-                          key={`${depot}::${name}_${fmt(d)}`}
-                          className={`px-1 py-1 text-[11px] leading-tight border-l border-gray-700 ${bgColor} ${
-                            outside ? "opacity-50" : ""
-                          }`}
-                          title={`${depot} • ${name} • ${fmtWithWeekday(
-                            d
-                          )} • DIA ${dia} / ${t.in}~${t.out}`}
-                        >
-                          <div className="font-semibold">{finalLabel}</div>
-                          <div className="mt-0.5">{t.in || "-"}</div>
-                          <div>{t.out || "-"}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
+                <div>{d.getDate()}</div>
+                <div className="text-[11px] opacity-80">
+                  {["일", "월", "화", "수", "목", "금", "토"][dow]}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 인원 리스트 — 헤더와 같은 translateX 로 함께 움직임, 가로 스와이프도 여기서 감지 */}
+      <div
+        data-scroll-area
+        className="rounded-b-xl"
+        style={{
+          transform: `translateX(${dragX}px)`,
+          transition: snapping ? "transform 300ms ease-out" : "none",
+          willChange: "transform",
+          // pan-y: 세로 스크롤은 appRef 에 넘김. 가로는 앱이 감지해서 preventDefault.
+          touchAction: "pan-y",
+        }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
+        {/* 인원 리스트를 감싸는 relative — 빨간 박스는 이 안에서만 차지 */}
+        <div className="relative">
+          {/* 오늘 열 표시 — 인원 리스트 실제 높이만큼만 */}
+          {todayColIndex >= 0 && people.length > 0 && (
+            <div
+              className="absolute pointer-events-none border-2 border-red-400 rounded-md"
+              style={{
+                top: 0,
+                bottom: 0,
+                left: `calc(${NAME_COL_W}px + ${todayColIndex} * ((100% - ${NAME_COL_W}px) / 7))`,
+                width: `calc((100% - ${NAME_COL_W}px) / 7)`,
+                zIndex: 4,
+              }}
+            />
+          )}
+          <div className="divide-y divide-gray-700">
+            {people.map(({ name, depot }) => (
+              <div
+                key={`${depot}::${name}`}
+                className="grid bg-gray-800/60 hover:bg-gray-800"
+                style={{
+                  gridTemplateColumns: `${NAME_COL_W}px repeat(7, minmax(0,1fr))`,
+                }}
+              >
+                <div className="px-2 py-1 border-r border-gray-700 flex items-center justify-between min-w-0">
+                  <div
+                    className="text-white font-semibold truncate text-[12px] min-w-0"
+                    title={`${depot} • ${name}`}
+                  >
+                    {name}
+                  </div>
+                  <button
+                    className="w-4 h-4 rounded-full bg-gray-700 hover:bg-gray-600 text-[10px] flex items-center justify-center flex-shrink-0 ml-0.5"
+                    onClick={() => removePerson(name, depot)}
+                    type="button"
+                  >
+                    −
+                  </button>
+                </div>
+                {displayedWeekDays.map((d) => {
+                  const row = rowAtDateFor(name, depot, d);
+                  const t = computeInOut(row, d, holidaySet);
+                  const dia =
+                    row?.dia === undefined
+                      ? "-"
+                      : typeof row.dia === "number"
+                      ? row.dia
+                      : String(row.dia).replace(/\s+/g, "");
+                  const diaLabel =
+                    row?.dia == null
+                      ? ""
+                      : String(row.dia).replace(/\s+/g, "");
+                  const finalLabel = isOverridden(name, depot, d)
+                    ? diaLabel
+                      ? `*${diaLabel}`
+                      : "*"
+                    : diaLabel || "-";
+                  const outside = d.getMonth() !== monthIdx;
+
+                  let bgColor = "bg-gray-800/60";
+                  const todayDiaStr = String(row?.dia || "").replace(
+                    /\s/g,
+                    ""
+                  );
+                  const isOff =
+                    !todayDiaStr ||
+                    todayDiaStr.startsWith("휴") ||
+                    todayDiaStr.includes("비번") ||
+                    todayDiaStr === "비" ||
+                    todayDiaStr.endsWith("~");
+                  if (!isOff) {
+                    const isTime = (v) =>
+                      typeof v === "string" &&
+                      /^\d{1,2}\s*:\s*\d{2}$/.test(v);
+                    const hasWork = isTime(t.in) || isTime(t.out);
+                    if (t.isNight) bgColor = "bg-sky-500/30";
+                    else if (hasWork) bgColor = "bg-yellow-500/30";
+                  }
+                  return (
+                    <div
+                      key={`${depot}::${name}_${fmt(d)}`}
+                      className={`px-1 py-1 text-[11px] leading-tight border-l border-gray-700 ${bgColor} ${
+                        outside ? "opacity-50" : ""
+                      }`}
+                      title={`${depot} • ${name} • ${fmtWithWeekday(
+                        d
+                      )} • DIA ${dia} / ${t.in}~${t.out}`}
+                    >
+                      <div className="font-semibold">{finalLabel}</div>
+                      <div className="mt-0.5">{t.in || "-"}</div>
+                      <div>{t.out || "-"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {people.length === 0 && (
+              <div className="text-center py-8 text-xs text-gray-500">
+                "인원·그룹 관리" 로 사람을 추가하세요.
+              </div>
+            )}
+          </div>
         </div>
       </div>
       <div className="mt-1 text-[10px] text-gray-400 text-center">
-        ← 오른쪽: 다음달 / 왼쪽: 전달 · 위/아래: 주 변경
+        주 이동은 상단 날짜 바를 ← / → 로 스와이프 · 인원 목록은 위아래 스크롤
       </div>
     </div>
   );

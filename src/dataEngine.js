@@ -1,20 +1,12 @@
 /**
- * dataEngine.js  (v3 - ZIP handle 지연 로딩)
+ * dataEngine.js  (v4 - ZIP 핸들 자동 복구)
  *
- *  [v2 → v3 변경점]
- *   ❌ v2: 로딩 시 619장 PNG 전부를 Blob으로 변환해서 IDB에 저장 (5~10초)
- *   ✅ v3: txt만 즉시 파싱(<1초), ZIP Blob은 IDB에 통째로 저장,
- *          이미지는 JSZip 인스턴스를 메모리에 유지하고 필요할 때만 꺼냄 + LRU 캐시
+ *  [v3 → v4 변경점]
+ *   ✅ getPathImageURL() 에서 ZIP 핸들이 없으면 IDB에서 즉시 복원 시도
+ *   ✅ restoreZipHandleFromDB 실패 시 명확한 로깅
+ *   ✅ 이미지 로드 실패 시 자동 재시도 (핸들 복구 후 한 번 더)
  *
- *  결과:
- *   - 첫 등록:    5~10초 → 0.5~1초
- *   - 재방문:     3~5초  → 0.2초 (IDB에서 ZIP blob만 로드, 이미지는 지연)
- *   - 행로표 첫 표시: 0.1~0.3초 (해당 이미지만 디코드)
- *   - 행로표 재표시: 즉시 (LRU 캐시)
- *
- *  사용 변화:
- *   - getPathImageURL() 이 { url, loading, promise } 반환
- *     → 컴포넌트는 promise.then(rerender) 해야 함
+ *  결과: 앱 업데이트 / 탭 재시작 후 행로표가 안 뜨던 버그 해결
  */
 
 import JSZip from "jszip";
@@ -91,6 +83,40 @@ export function hasZipHandle(depotKey) {
 }
 
 // ─────────────────────────────────────────────
+//  ⭐ v4: ZIP 핸들 자동 복구 (싱글톤 Promise)
+// ─────────────────────────────────────────────
+//
+//  첫 번째 이미지 요청 시 ZIP 핸들이 없으면 IDB에서 복원.
+//  동시에 여러 이미지가 요청되어도 한 번만 복원하도록 Promise 캐싱.
+//
+let _restorePromise = null;
+
+function _ensureZipHandles() {
+  if (_zipHandles.size > 0) return Promise.resolve(true);
+  if (_restorePromise) return _restorePromise;
+
+  _restorePromise = restoreZipHandleFromDB("latest")
+    .then((ok) => {
+      if (!ok) {
+        console.warn(
+          "[dataEngine] ZIP 핸들 복원 실패 — zipBlobs 에 저장된 ZIP 없음"
+        );
+      }
+      return ok;
+    })
+    .catch((err) => {
+      console.warn("[dataEngine] ZIP 핸들 복원 중 오류:", err);
+      return false;
+    })
+    .finally(() => {
+      // 성공 여부와 무관하게 promise 초기화 (다음번 재시도 가능)
+      _restorePromise = null;
+    });
+
+  return _restorePromise;
+}
+
+// ─────────────────────────────────────────────
 //  날짜 / 공통 유틸
 // ─────────────────────────────────────────────
 
@@ -155,7 +181,6 @@ export async function loadZipToCommonMap(fileOrBlob, onProgress) {
   report("opening", 0, 1);
   const zip = await JSZip.loadAsync(fileOrBlob);
 
-  // 1단계: txt 파일만 수집
   const txtEntries = [];
   zip.forEach((relativePath, entry) => {
     if (entry.dir) return;
@@ -187,7 +212,6 @@ export async function loadZipToCommonMap(fileOrBlob, onProgress) {
     );
   }
 
-  // 2단계: 이미지 경로 "인덱스만" 수집 (bytes는 안 읽음!)
   const imageIndex = {};
   zip.forEach((relativePath, entry) => {
     if (entry.dir) return;
@@ -210,10 +234,8 @@ export async function loadZipToCommonMap(fileOrBlob, onProgress) {
 
   report("parsing", total, total);
 
-  // 3단계: CommonDepotData 생성
   const result = _parseTextsToCommonMap(parsedTexts, imageIndex);
 
-  // 4단계: ZIP 핸들을 메모리에 유지
   for (const key of Object.keys(result)) {
     _zipHandles.set(key, zip);
   }
@@ -264,19 +286,17 @@ function _buildCommonFromZipFiles(key, files, imgIndex) {
     hol: _parseWorktimeMap(files["basedata/hol_worktime.txt"] || "", gyobun),
   };
 
-  // paths는 "인덱스"만 (존재 여부 표시)
   const paths = {};
   for (const folder of VALID_PATH_FOLDERS) {
     paths[folder] = {};
     const set = imgIndex[folder];
     if (set) {
       for (const num of set) {
-        paths[folder][num] = true; // sentinel
+        paths[folder][num] = true;
       }
     }
   }
 
-  // alarm 파싱 (텍스트 즉시 파싱)
   const alarms = { nor: {}, sat: {}, hol: {} };
   for (const folder of ALARM_FOLDERS) {
     const folderPrefix = `alarm/${folder}/`;
@@ -402,16 +422,6 @@ export function loadPathsIntoCommon(common, zipParsedFiles) {
 //  핵심 계산
 // ─────────────────────────────────────────────
 
-/**
- * 한 기지의 common 데이터를 "오늘 배치"로 재정렬한 뒤 baseDate=today로 덮어쓴다.
- *
- *  - SetupWizard에서 선택한 기지에 적용하던 배치 로직을 단독 함수로 추출.
- *  - 각 기지는 자기 info.txt 기준 (baseDate/baseName/baseCode) 으로만 계산.
- *  - 이미 data.baseDate === todayStr 이면 그대로 반환 (멱등).
- *
- *  반환: 새 common 객체 ({ ...data, names, phones, baseDate, baseName, baseCode })
- *        회전이 불가능/불필요하면 원본 data 반환.
- */
 export function rebaseDepotToToday(data, todayStr) {
   if (!data?.names?.length || !data?.gyobun?.length || !data?.baseDate) {
     return data;
@@ -436,17 +446,8 @@ export function rebaseDepotToToday(data, todayStr) {
       )
     : -1;
 
-  const offset = diffDays(data.baseDate, todayStr); // today - baseDate
+  const offset = diffDays(data.baseDate, todayStr);
 
-  // 🔑 info.txt 기반 공식:
-  //   names_orig[k] 의 date 교번 = gyobun[(k - baseNameIdx + baseCodeIdx + offset) mod len]
-  //
-  // 목표: namesToday[i] = "오늘 gyobun[i] 를 받는 사람"
-  // 해:  k = mod(i + baseNameIdx - baseCodeIdx - offset, len)
-  //
-  // baseName / baseCode 를 못 찾으면 info.txt 무시 fallback:
-  //   names_orig[k] 의 date 교번 = gyobun[(k + offset) mod len]
-  //   → k = mod(i - offset, len)
   const shift =
     baseNameIdx >= 0 && baseCodeIdx >= 0
       ? baseNameIdx - baseCodeIdx - offset
@@ -461,8 +462,6 @@ export function rebaseDepotToToday(data, todayStr) {
     phonesToday[i] = oldPhones[origIdx] || "";
   }
 
-  // baseDate = today 로 옮기면서 baseName 도 오늘 배치 기준으로 갱신.
-  // (baseCodeIdx 자리에 있는 이름 = 오늘 baseCode 를 받는 사람)
   const newBaseName =
     baseCodeIdx >= 0 && baseCodeIdx < len
       ? namesToday[baseCodeIdx]
@@ -491,11 +490,8 @@ export function getCodeForDate(common, name, dateStr, overrides = {}) {
   if (nameIdx < 0 || !common.gyobun.length) return "";
 
   const len = common.gyobun.length;
-  const offset = diffDays(common.baseDate, dateStr); // date - baseDate
+  const offset = diffDays(common.baseDate, dateStr);
 
-  // 🔑 info.txt 기반 공식:
-  //   names[k]의 date 교번 = gyobun[(k - baseNameIdx + baseCodeIdx + offset) mod len]
-  // baseName/baseCode가 없거나 못 찾으면 fallback: (nameIdx + offset) (legacy)
   const baseNameIdx = common.baseName
     ? common.names.findIndex((n) => norm(n) === norm(common.baseName))
     : -1;
@@ -515,7 +511,6 @@ export function getCodeForDate(common, name, dateStr, overrides = {}) {
   if (baseNameIdx >= 0 && baseCodeIdx >= 0) {
     codeIdx = positiveMod(nameIdx - baseNameIdx + baseCodeIdx + offset, len);
   } else {
-    // fallback (이전 동작)
     codeIdx = positiveMod(nameIdx + offset, len);
   }
   return common.gyobun[codeIdx] || "";
@@ -528,20 +523,20 @@ export function getWorktime(common, code, dateStr, holidaySet = new Set()) {
 }
 
 // ─────────────────────────────────────────────
-//  이미지 URL 획득 (v3 - 지연 로드 대응)
+//  이미지 URL 획득 (v4 - 자동 복구)
 // ─────────────────────────────────────────────
 
 /**
  * @returns { url, loading, promise }
  *   - 캐시 HIT: { url: "blob:...", loading: false, promise: null }
  *   - 캐시 MISS + 핸들 있음: { url: null, loading: true, promise: Promise<url|null> }
- *   - 핸들 없음: { url: null, loading: false, promise: null }
+ *   - 핸들 없음: { url: null, loading: true, promise: Promise<url|null> }
+ *       (v4: 핸들이 없어도 즉시 실패하지 않고 IDB 복원 시도)
  */
 export function getPathImageURL(common, code, dateStr, holidaySet = new Set()) {
   const empty = { url: null, loading: false, promise: null };
   if (!code || !common?.paths) return empty;
 
-  // 휴N, 비번, ---- 등 쉬는 코드는 행로 없음
   const sNorm = normalizeCode(code);
   if (
     !sNorm ||
@@ -562,7 +557,7 @@ export function getPathImageURL(common, code, dateStr, holidaySet = new Set()) {
   const entry = common.paths[folder]?.[num];
   if (!entry) return empty;
 
-  // v1 레거시: dataURL 문자열
+  // v1 레거시: dataURL
   if (typeof entry === "string" && entry.startsWith("data:")) {
     return { url: entry, loading: false, promise: null };
   }
@@ -577,16 +572,47 @@ export function getPathImageURL(common, code, dateStr, holidaySet = new Set()) {
     return { url, loading: false, promise: null };
   }
 
-  // v3: sentinel → ZIP 핸들에서 지연 로드
+  // v3/v4: sentinel → ZIP 핸들에서 지연 로드
   const cacheKey = `${common.key}::${folder}::${num}`;
   const cached = _imageCache.get(cacheKey);
   if (cached) return { url: cached.url, loading: false, promise: null };
 
-  const zip = _zipHandles.get(common.key);
-  if (!zip) return empty;
-
-  const promise = _lazyLoadImageFromZip(zip, common.key, folder, num);
+  // ⭐ v4: 핸들이 없으면 IDB 에서 복원 시도하는 promise 반환
+  const promise = _loadImageWithAutoRestore(common.key, folder, num);
   return { url: null, loading: true, promise };
+}
+
+/**
+ * v4: 핸들이 있으면 바로 로드, 없으면 IDB 에서 복원 후 로드
+ */
+async function _loadImageWithAutoRestore(depotKey, folder, num) {
+  const cacheKey = `${depotKey}::${folder}::${num}`;
+  const cached = _imageCache.get(cacheKey);
+  if (cached) return cached.url;
+
+  // 1) 핸들 있으면 바로 시도
+  let zip = _zipHandles.get(depotKey);
+
+  // 2) 없으면 IDB 에서 복원 시도
+  if (!zip) {
+    const restored = await _ensureZipHandles();
+    if (!restored) {
+      console.warn(
+        `[dataEngine] 이미지 로드 실패 — ZIP 복원 불가 (${depotKey}/${folder}/${num})`
+      );
+      return null;
+    }
+    zip = _zipHandles.get(depotKey);
+    if (!zip) {
+      console.warn(
+        `[dataEngine] ZIP 복원은 성공했지만 ${depotKey} 핸들 없음`
+      );
+      return null;
+    }
+  }
+
+  // 3) ZIP 에서 이미지 꺼내기
+  return _lazyLoadImageFromZip(zip, depotKey, folder, num);
 }
 
 async function _lazyLoadImageFromZip(zip, depotKey, folder, num) {
@@ -622,7 +648,6 @@ async function _lazyLoadImageFromZip(zip, depotKey, folder, num) {
   return null;
 }
 
-/** 레거시 호환: 동기적으로 URL만 반환 (없으면 null) */
 export function getPathImage(common, code, dateStr, holidaySet = new Set()) {
   const res = getPathImageURL(common, code, dateStr, holidaySet);
   return res.url;
@@ -749,7 +774,7 @@ export function isRestCode(code) {
 }
 
 // ─────────────────────────────────────────────
-//  IndexedDB - v3
+//  IndexedDB
 // ─────────────────────────────────────────────
 
 const IDB_NAME = "gyobeon-engine-db";
@@ -774,10 +799,6 @@ function openDB() {
   });
 }
 
-/**
- * CommonMap 저장 - paths 안의 큰 바이너리는 sentinel로 치환
- * (메타데이터만 저장 = 빠름)
- */
 export async function saveCommonDataToDB(commonMap) {
   const db = await openDB();
 
@@ -789,9 +810,9 @@ export async function saveCommonDataToDB(commonMap) {
       pathsLite[folder] = {};
       for (const [num, v] of Object.entries(inner || {})) {
         if (typeof v === "string" && v.startsWith("data:")) {
-          pathsLite[folder][num] = true; // 레거시 dataURL은 폐기
+          pathsLite[folder][num] = true;
         } else if (v instanceof Blob) {
-          pathsLite[folder][num] = true; // Blob도 sentinel로
+          pathsLite[folder][num] = true;
         } else {
           pathsLite[folder][num] = v;
         }
@@ -820,7 +841,6 @@ export async function loadCommonDataFromDB() {
   });
 }
 
-/** ZIP Blob 저장 (소속별 분리 저장 가능) */
 export async function saveZipBlobToDB(blob, name, slotKey = "latest") {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -843,19 +863,15 @@ export async function loadZipBlobFromDB(slotKey = "latest") {
   });
 }
 
-/**
- * 앱 시작 시: IDB에서 ZIP Blob 꺼내서 JSZip 핸들 복원
- * (이미지는 여전히 지연 로드되지만 "준비 완료" 상태로 진입)
- *
- * @returns {Promise<boolean>}
- */
 export async function restoreZipHandleFromDB(slotKey = "latest") {
   try {
     const rec = await loadZipBlobFromDB(slotKey);
-    if (!rec?.blob) return false;
+    if (!rec?.blob) {
+      console.log("[restoreZipHandleFromDB] IDB에 저장된 ZIP blob 없음");
+      return false;
+    }
     const zip = await JSZip.loadAsync(rec.blob);
 
-    // ZIP 안 최상위 폴더 찾기 (GB_data_xxx 같은)
     const rootFolders = Array.from(
       new Set(
         Object.keys(zip.files)
@@ -864,7 +880,7 @@ export async function restoreZipHandleFromDB(slotKey = "latest") {
       )
     );
 
-    // 각 depot key에 대해 ZIP 안에 실제로 있는지 확인 후 핸들 등록
+    let registered = 0;
     for (const key of Object.keys(ZIP_KEY_TO_DEPOT)) {
       const candidates = [
         `${key}/basedata/gyobun.txt`,
@@ -873,13 +889,17 @@ export async function restoreZipHandleFromDB(slotKey = "latest") {
       for (const p of candidates) {
         if (zip.file(p)) {
           _zipHandles.set(key, zip);
+          registered++;
           break;
         }
       }
     }
+    console.log(
+      `[restoreZipHandleFromDB] ZIP 핸들 ${registered}개 기지 복원 완료`
+    );
     return _zipHandles.size > 0;
   } catch (err) {
-    console.warn("[restoreZipHandleFromDB]", err);
+    console.error("[restoreZipHandleFromDB] 복원 실패:", err);
     return false;
   }
 }
@@ -934,32 +954,30 @@ function _offlineKoreanHolidays(y) {
 }
 
 // ─────────────────────────────────────────────
-//  전체 초기화 — IDB 삭제 + 메모리 ZIP 핸들 해제
+//  전체 초기화
 // ─────────────────────────────────────────────
-/**
- * 모든 영구 저장 데이터를 초기화한다.
- *  - IndexedDB (engineData + zipBlobs 전체 삭제)
- *  - 메모리의 ZIP 핸들/이미지 캐시 해제
- *
- * 호출하는 쪽에서 추가로 localStorage.clear() 도 해야 완전 초기화됨.
- */
+
 export async function resetAllStorage() {
-  // 1) 메모리의 ZIP 핸들/이미지 캐시 해제 (있다면)
   try {
-    if (typeof _clearZipHandles === "function") _clearZipHandles();
+    _zipHandles.clear();
   } catch {}
   try {
-    if (typeof _clearImageCache === "function") _clearImageCache();
+    for (const [, entry] of _imageCache) {
+      if (entry?.url) {
+        try {
+          URL.revokeObjectURL(entry.url);
+        } catch {}
+      }
+    }
+    _imageCache.clear();
   } catch {}
 
-  // 2) IDB 전체 삭제 (깔끔한 방식 — DB 자체를 제거)
   await new Promise((resolve) => {
     try {
       const req = indexedDB.deleteDatabase(IDB_NAME);
       req.onsuccess = () => resolve();
-      req.onerror = () => resolve(); // 실패해도 진행
+      req.onerror = () => resolve();
       req.onblocked = () => resolve();
-      // 안전망 — 3초 뒤 강제 진행
       setTimeout(resolve, 3000);
     } catch {
       resolve();
