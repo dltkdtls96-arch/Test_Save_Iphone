@@ -85,8 +85,6 @@ import {
 import PasswordGate from "./lock/PasswordGate";
 
 const STORAGE_KEY = "workCalendarSettingsV3";
-const DATA_VERSION = 20; // v19 → v20: 다른 기지 names 가 anchor 기준으로 잘못 회전되던 버그 수정
-// → 기존 commonMap 은 각 기지 info 기준으로 재배치 필요하므로 마이그레이션
 
 const DEPOTS = ["안심", "월배", "경산", "문양", "교대", "교대(외)"];
 
@@ -1291,9 +1289,7 @@ export default function App() {
   const isAnyLocked = isHomeCalLocked || isRouteLocked;
 
   // ── 초기 로드 ──
-  const [isMigrating, setIsMigrating] = useState(false);
   useEffect(() => {
-    let migrated = false;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) {
@@ -1301,9 +1297,6 @@ export default function App() {
         setHolidaysText(DEFAULT_HOLIDAYS_25_26);
       } else {
         const s = JSON.parse(raw);
-        const savedDataVersion = s.dataVersion ?? 0;
-        const isOldData = savedDataVersion !== DATA_VERSION;
-        migrated = isOldData;
         if (s.nightDiaByDepot) setNightDiaByDepot(s.nightDiaByDepot);
         else if (typeof s.nightDiaThreshold === "number")
           setNightDiaByDepot({
@@ -1313,7 +1306,7 @@ export default function App() {
             문양: s.nightDiaThreshold,
           });
         if (s.routeScaleByDepot) setRouteScaleByDepot(s.routeScaleByDepot);
-        if (s.tablesByDepot && !isOldData) setTablesByDepot(s.tablesByDepot);
+        if (s.tablesByDepot) setTablesByDepot(s.tablesByDepot);
         if (s.myNameMap) setMyNameMap(s.myNameMap);
         if (s.selectedDepot) setSelectedDepot(s.selectedDepot);
         if (s.overridesByDepot) setOverridesByDepot(s.overridesByDepot);
@@ -1322,10 +1315,8 @@ export default function App() {
         if (!s.tablesByDepot && s.tableText)
           setTablesByDepot((prev) => ({ ...prev, 안심: s.tableText }));
         if (!s.myNameMap && s.myName) setMyNameForDepot("안심", s.myName);
-        // ⚠️ isOldData 시 anchorDateByDepot 로딩 스킵
-        if (!isOldData && s.anchorDateByDepot)
-          setAnchorDateByDepot(s.anchorDateByDepot);
-        else if (!isOldData && s.anchorDateStr)
+        if (s.anchorDateByDepot) setAnchorDateByDepot(s.anchorDateByDepot);
+        else if (s.anchorDateStr)
           setAnchorDateByDepot(
             Object.fromEntries(DEPOTS.map((d) => [d, s.anchorDateStr]))
           );
@@ -1341,18 +1332,14 @@ export default function App() {
     } catch (e) {
       console.warn("[LOAD] 설정 로드 실패", e);
     }
-    setIsMigrating(migrated);
 
     // commonMap IndexedDB 복원 + ZIP 핸들 복원 (병렬)
-    // isOldData인 경우 이전 버전 names 회전이 잘못됐을 수 있어 commonMap도 무시
     Promise.all([
-      migrated ? Promise.resolve(null) : loadCommonDataFromDB(),
+      loadCommonDataFromDB(),
       restoreZipHandleFromDB("latest").catch(() => false),
     ])
       .then(([saved]) => {
         if (saved) setCommonMap(saved);
-        // 마이그레이션인 경우 자동 Wizard 강제 표시
-        if (migrated) setShowSetupWizard(true);
       })
       .catch(() => {});
 
@@ -1650,7 +1637,6 @@ export default function App() {
   useEffect(() => {
     if (!loaded) return;
     const data = {
-      dataVersion: DATA_VERSION,
       myNameMap,
       selectedDepot,
       anchorDateByDepot,

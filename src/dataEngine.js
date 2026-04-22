@@ -604,9 +604,7 @@ async function _loadImageWithAutoRestore(depotKey, folder, num) {
     }
     zip = _zipHandles.get(depotKey);
     if (!zip) {
-      console.warn(
-        `[dataEngine] ZIP 복원은 성공했지만 ${depotKey} 핸들 없음`
-      );
+      console.warn(`[dataEngine] ZIP 복원은 성공했지만 ${depotKey} 핸들 없음`);
       return null;
     }
   }
@@ -841,26 +839,136 @@ export async function loadCommonDataFromDB() {
   });
 }
 
+// ─────────────────────────────────────────────
+//  ZIP blob 이중 보관소 (IndexedDB + Cache Storage)
+//
+//  iOS Safari PWA 환경에서 IndexedDB 가 7일 경과·앱 업데이트 등으로
+//  통째로 비워지는 사례가 보고되어 있어, Cache Storage 에도 동일한
+//  ZIP blob 을 복제 보관하여 한쪽이 날아가도 복구되도록 함.
+//
+//  - Cache Storage 는 PWA precache (Workbox) 와 분리된 커스텀 캐시명
+//    `"zip-backup-v1"` 을 사용하므로 `cleanupOutdatedCaches` 에 의해
+//    지워지지 않음.
+//  - 가상의 URL (`/__zip-backup__/<slotKey>`) 을 키로 사용.
+// ─────────────────────────────────────────────
+const ZIP_CACHE_NAME = "zip-backup-v1";
+const ZIP_CACHE_URL_PREFIX = "/__zip-backup__/";
+
+async function _saveZipBlobToCache(blob, name, slotKey) {
+  if (typeof caches === "undefined") return false;
+  try {
+    const cache = await caches.open(ZIP_CACHE_NAME);
+    // blob 본체
+    await cache.put(
+      new Request(ZIP_CACHE_URL_PREFIX + slotKey),
+      new Response(blob, {
+        headers: {
+          "Content-Type": "application/zip",
+          "X-Zip-Name": encodeURIComponent(name || ""),
+          "X-Saved-At": String(Date.now()),
+        },
+      })
+    );
+    return true;
+  } catch (err) {
+    console.warn("[saveZipBlobToCache] 실패", err);
+    return false;
+  }
+}
+
+async function _loadZipBlobFromCache(slotKey) {
+  if (typeof caches === "undefined") return null;
+  try {
+    const cache = await caches.open(ZIP_CACHE_NAME);
+    const res = await cache.match(ZIP_CACHE_URL_PREFIX + slotKey);
+    if (!res) return null;
+    const blob = await res.blob();
+    const name = decodeURIComponent(res.headers.get("X-Zip-Name") || "");
+    const savedAt = Number(res.headers.get("X-Saved-At")) || Date.now();
+    return { blob, name, savedAt };
+  } catch (err) {
+    console.warn("[loadZipBlobFromCache] 실패", err);
+    return null;
+  }
+}
+
+async function _deleteZipBlobFromCache(slotKey) {
+  if (typeof caches === "undefined") return;
+  try {
+    const cache = await caches.open(ZIP_CACHE_NAME);
+    await cache.delete(ZIP_CACHE_URL_PREFIX + slotKey);
+  } catch {}
+}
+
 export async function saveZipBlobToDB(blob, name, slotKey = "latest") {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_ZIPS, "readwrite");
-    const store = tx.objectStore(STORE_ZIPS);
-    store.put({ blob, name, savedAt: Date.now() }, slotKey);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  // 1) IndexedDB 저장 (주 저장소)
+  let idbOk = false;
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_ZIPS, "readwrite");
+      const store = tx.objectStore(STORE_ZIPS);
+      store.put({ blob, name, savedAt: Date.now() }, slotKey);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    idbOk = true;
+  } catch (err) {
+    console.warn("[saveZipBlobToDB] IndexedDB 저장 실패, Cache 에만 저장", err);
+  }
+
+  // 2) Cache Storage 백업 (iOS IDB 증발 대비)
+  await _saveZipBlobToCache(blob, name, slotKey);
+
+  // 3) 영구 저장 권한 요청 (가능한 브라우저에서)
+  try {
+    if (typeof navigator !== "undefined" && navigator.storage?.persist) {
+      await navigator.storage.persist();
+    }
+  } catch {}
+
+  return idbOk;
 }
 
 export async function loadZipBlobFromDB(slotKey = "latest") {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_ZIPS, "readonly");
-    const store = tx.objectStore(STORE_ZIPS);
-    const req = store.get(slotKey);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
+  // 1) IndexedDB 우선
+  try {
+    const db = await openDB();
+    const rec = await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_ZIPS, "readonly");
+      const store = tx.objectStore(STORE_ZIPS);
+      const req = store.get(slotKey);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+    if (rec?.blob) return rec;
+  } catch (err) {
+    console.warn("[loadZipBlobFromDB] IndexedDB 읽기 실패, Cache 폴백", err);
+  }
+
+  // 2) Cache Storage 폴백 — 복원된 blob 을 IndexedDB 로 다시 올려둠
+  const cached = await _loadZipBlobFromCache(slotKey);
+  if (cached?.blob) {
+    console.log(
+      "[loadZipBlobFromDB] IndexedDB 비어있어 Cache Storage 에서 복원 성공"
+    );
+    // IDB 에도 재저장 시도 (다음번 로드 속도 향상 + 재증발 방지)
+    try {
+      const db = await openDB();
+      await new Promise((resolve) => {
+        const tx = db.transaction(STORE_ZIPS, "readwrite");
+        tx.objectStore(STORE_ZIPS).put(
+          { blob: cached.blob, name: cached.name, savedAt: cached.savedAt },
+          slotKey
+        );
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch {}
+    return cached;
+  }
+
+  return null;
 }
 
 export async function restoreZipHandleFromDB(slotKey = "latest") {
@@ -970,6 +1078,13 @@ export async function resetAllStorage() {
       }
     }
     _imageCache.clear();
+  } catch {}
+
+  // Cache Storage 의 ZIP 백업도 함께 제거
+  try {
+    if (typeof caches !== "undefined") {
+      await caches.delete(ZIP_CACHE_NAME);
+    }
   } catch {}
 
   await new Promise((resolve) => {
