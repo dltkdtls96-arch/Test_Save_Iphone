@@ -2363,8 +2363,7 @@ export default function App() {
           msOverflowStyle: "none",
           touchAction: selectedTab === "compare" ? "pan-y" : "manipulation",
           // compare 탭에서 아래 탭바에 가려지지 않도록 하단 패딩
-          paddingBottom:
-            selectedTab === "compare" ? "80px" : undefined,
+          paddingBottom: selectedTab === "compare" ? "80px" : undefined,
         }}
       >
         {/* 홈 탭 */}
@@ -4070,7 +4069,7 @@ function FixedTabbarPortal({ children }) {
         mountRef.current
       )
     : null;
-}// CompareWeeklyBoard — commonMap 기반 row + 단일 야간 판정 (worktime)
+} // CompareWeeklyBoard — commonMap 기반 row + 단일 야간 판정 (worktime)
 // v2: 세로 스와이프 제거, 좌/우 스와이프로 "주 단위" 이동 (월 경계 자동 넘김)
 //     인원이 많으면 내부 영역 자체가 스크롤 가능
 function CompareWeeklyBoard({
@@ -4835,11 +4834,15 @@ function CompareWeeklyBoard({
         ref={headerRef}
         className="relative"
         style={{
-          zIndex: 2,
-          transform: `translateX(${dragX}px)`,
-          transition: snapping ? "transform 300ms ease-out" : "none",
-          willChange: "transform",
+          // 세로 스크롤 시 상단 고정 (appRef 기준)
+          position: "sticky",
+          top: 0,
+          zIndex: 5,
+          // 헤더는 가로 스와이프 시에도 움직이지 않음 (transform 없음)
+          // → 아래 리스트만 좌우로 밀려 보이게
           touchAction: "pan-x",
+          // 부모 카드와 동일한 배경 (테마 변수 사용)
+          background: "var(--surface-2)",
         }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -4947,9 +4950,7 @@ function CompareWeeklyBoard({
                       ? row.dia
                       : String(row.dia).replace(/\s+/g, "");
                   const diaLabel =
-                    row?.dia == null
-                      ? ""
-                      : String(row.dia).replace(/\s+/g, "");
+                    row?.dia == null ? "" : String(row.dia).replace(/\s+/g, "");
                   const finalLabel = isOverridden(name, depot, d)
                     ? diaLabel
                       ? `*${diaLabel}`
@@ -4958,10 +4959,7 @@ function CompareWeeklyBoard({
                   const outside = d.getMonth() !== monthIdx;
 
                   let bgColor = "bg-gray-800/60";
-                  const todayDiaStr = String(row?.dia || "").replace(
-                    /\s/g,
-                    ""
-                  );
+                  const todayDiaStr = String(row?.dia || "").replace(/\s/g, "");
                   const isOff =
                     !todayDiaStr ||
                     todayDiaStr.startsWith("휴") ||
@@ -4970,8 +4968,7 @@ function CompareWeeklyBoard({
                     todayDiaStr.endsWith("~");
                   if (!isOff) {
                     const isTime = (v) =>
-                      typeof v === "string" &&
-                      /^\d{1,2}\s*:\s*\d{2}$/.test(v);
+                      typeof v === "string" && /^\d{1,2}\s*:\s*\d{2}$/.test(v);
                     const hasWork = isTime(t.in) || isTime(t.out);
                     if (t.isNight) bgColor = "bg-sky-500/30";
                     else if (hasWork) bgColor = "bg-yellow-500/30";
