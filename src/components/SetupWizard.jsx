@@ -36,7 +36,7 @@ import {
   isNightCode,
   isOffCode,
   getCodeForDate,
-  diffDays,
+  rebaseDepotToToday,
 } from "../dataEngine";
 
 // 소속 → ZIP key
@@ -177,108 +177,76 @@ export default function SetupWizard({
     const today = todayStr();
 
     const key = DEPOT_TO_KEY[depot] || depot;
-    let data = (mode === "zip" ? commonMap : existingTsvData)?.[key];
     let effectiveCommonMap = commonMap;
 
-    if (
-      mode === "zip" &&
-      data?.gyobun?.length &&
-      data?.names?.length &&
-      data?.baseDate
-    ) {
-      const len = data.names.length;
-      const isNewName = myName && !data.names.includes(myName);
-
-      // 🔑 info.txt 기반 올바른 공식:
-      //   names_orig[k]의 date 교번 = gyobun[(k - baseNameIdx + baseCodeIdx + (date - baseDate)) mod len]
-      //
-      // 목표: namesToday[i] = "오늘 gyobun[i]를 받는 사람"
-      // 해: k = mod(i + baseNameIdx - baseCodeIdx - offset, len)
-      const baseNameIdx = data.names.findIndex(
-        (n) =>
-          (n || "").replace(/\s/g, "") ===
-          (data.baseName || "").replace(/\s/g, "")
-      );
-      const baseCodeIdx = data.gyobun.findIndex(
-        (c) =>
-          (c || "").trim().toLowerCase() ===
-          (data.baseCode || "").trim().toLowerCase()
-      );
-      const offset = diffDays(data.baseDate, today); // today - baseDate
-
-      // baseName/baseCode를 찾지 못하면 info.txt 무시하고 단순 공식 (fallback)
-      const shift =
-        baseNameIdx >= 0 && baseCodeIdx >= 0
-          ? baseNameIdx - baseCodeIdx - offset
-          : -offset;
-
-      console.log(
-        "[Wizard] baseDate=",
-        data.baseDate,
-        "today=",
-        today,
-        "offset=",
-        offset,
-        "baseName=",
-        data.baseName,
-        "baseNameIdx=",
-        baseNameIdx,
-        "baseCode=",
-        data.baseCode,
-        "baseCodeIdx=",
-        baseCodeIdx,
-        "shift=",
-        shift,
-        "len=",
-        len
-      );
-
-      const namesToday = new Array(len);
-      const phonesToday = new Array(len);
-      const oldPhones = data.phones || [];
-      for (let i = 0; i < len; i++) {
-        const origIdx = (((i + shift) % len) + len) % len;
-        namesToday[i] = data.names[origIdx];
-        phonesToday[i] = oldPhones[origIdx] || "";
+    if (mode === "zip" && commonMap) {
+      // 🔑 모든 기지를 각자 info.txt (baseDate/baseName/baseCode) 기준으로
+      //    "오늘 배치" 로 재정렬한다. 내 기지만 돌리고 말면 다른 기지 화면에서
+      //    이름↔교번이 어긋난다 (버그 재발 방지).
+      const rebuilt = {};
+      for (const [k, dv] of Object.entries(commonMap)) {
+        if (!dv || typeof dv !== "object") {
+          rebuilt[k] = dv;
+          continue;
+        }
+        rebuilt[k] = rebaseDepotToToday(dv, today);
       }
 
-      // 새 이름 주입: myCode 자리에 myName (덮어쓰기)
-      if (isNewName) {
-        const codeIdx = data.gyobun.findIndex(
+      // 새 이름 주입: 선택한 기지의 myCode 자리에 myName (덮어쓰기)
+      // — 다른 기지에는 적용하지 않는다.
+      const myData = rebuilt[key];
+      if (
+        myName &&
+        myData?.names?.length &&
+        myData?.gyobun?.length &&
+        !myData.names.includes(myName)
+      ) {
+        const codeIdx = myData.gyobun.findIndex(
           (c) => c.trim().toLowerCase() === myCode.trim().toLowerCase()
         );
         if (codeIdx >= 0) {
-          namesToday[codeIdx] = myName;
-          phonesToday[codeIdx] = "";
+          const newNames = [...myData.names];
+          const newPhones = [...(myData.phones || [])];
+          while (newPhones.length < newNames.length) newPhones.push("");
+          newNames[codeIdx] = myName;
+          newPhones[codeIdx] = "";
+
+          // baseName 도 baseCodeIdx 자리 이름으로 다시 계산
+          // (myCode == baseCode 인 경우 baseName 이 myName 으로 바뀌어야 함)
+          const norm = (s) => String(s || "").replace(/\s+/g, "");
+          const baseCodeIdx = myData.baseCode
+            ? myData.gyobun.findIndex(
+                (c) =>
+                  String(c || "").trim().toLowerCase() ===
+                  String(myData.baseCode || "").trim().toLowerCase()
+              )
+            : -1;
+          const newBaseName =
+            baseCodeIdx >= 0 && baseCodeIdx < newNames.length
+              ? newNames[baseCodeIdx]
+              : myData.baseName;
+
+          rebuilt[key] = {
+            ...myData,
+            names: newNames,
+            phones: newPhones,
+            baseName: newBaseName,
+          };
+          // norm 은 lint용 참조 흔적 — 실제로는 위에서 쓰지 않음
+          void norm;
         }
       }
 
-      console.log(
-        "[Wizard] 샘플 (gyobun=namesToday):",
-        data.gyobun.slice(0, 12).map((c, i) => `${c}=${namesToday[i]}`)
-      );
+      effectiveCommonMap = rebuilt;
 
-      // baseDate = today, baseName = namesToday[baseCodeIdx] 로 업데이트
-      // 이제 anchor=today, (k + 0) = k 공식에 맞도록
-      // baseCodeIdx 자리에 있는 이름 = 오늘 baseCode 를 받는 사람
-      const newBaseName =
-        baseCodeIdx >= 0 && baseCodeIdx < len
-          ? namesToday[baseCodeIdx]
-          : namesToday[0];
-      const newBaseCode =
-        baseCodeIdx >= 0 && baseCodeIdx < len
-          ? data.gyobun[baseCodeIdx]
-          : data.gyobun[0];
-
-      const updatedData = {
-        ...data,
-        names: namesToday,
-        phones: phonesToday,
-        baseDate: today,
-        baseName: newBaseName,
-        baseCode: newBaseCode,
-      };
-      effectiveCommonMap = { ...commonMap, [key]: updatedData };
+      // 로그: 선택한 기지 배치 확인
+      const chk = rebuilt[key];
+      if (chk?.gyobun && chk?.names) {
+        console.log(
+          "[Wizard] 샘플 (gyobun=namesToday):",
+          chk.gyobun.slice(0, 12).map((c, i) => `${c}=${chk.names[i]}`)
+        );
+      }
     }
 
     const finalCommonMap =

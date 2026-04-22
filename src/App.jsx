@@ -14,6 +14,7 @@ import {
   loadPathsIntoCommon,
   restoreZipHandleFromDB,
   DEPOT_TO_ZIP_KEY,
+  rebaseDepotToToday,
 } from "./dataEngine";
 import SetupWizard from "./components/SetupWizard";
 import PersonEditModal from "./components/PersonEditModal";
@@ -83,7 +84,8 @@ import {
 import PasswordGate from "./lock/PasswordGate";
 
 const STORAGE_KEY = "workCalendarSettingsV3";
-const DATA_VERSION = 19; // v18 → v19: anchorDate 자동 갱신 로직 변경 (과거 역산 → 오늘 고정)
+const DATA_VERSION = 20; // v19 → v20: 다른 기지 names 가 anchor 기준으로 잘못 회전되던 버그 수정
+// → 기존 commonMap 은 각 기지 info 기준으로 재배치 필요하므로 마이그레이션
 
 const DEPOTS = ["안심", "월배", "경산", "문양", "교대", "교대(외)"];
 
@@ -1395,7 +1397,9 @@ export default function App() {
     );
     if (allToday) return;
 
-    // ZIP 데이터: names 재배치
+    // ZIP 데이터: 각 기지를 자기 info.txt (baseDate/baseName/baseCode) 기준으로
+    // "오늘 배치" 로 재정렬. (앞서 anchor 기준으로 회전시키던 로직은 버그 —
+    // ZIP 의 names 는 baseDate 기준으로 들어오기 때문에 anchor 기준 회전은 틀림)
     setCommonMap((prevMap) => {
       if (!prevMap) return prevMap;
       const nextMap = { ...prevMap };
@@ -1405,38 +1409,14 @@ export default function App() {
         const key = DEPOT_TO_ZIP_KEY[depot] || depot;
         const data = prevMap[key];
         if (!data?.names?.length || !data?.gyobun?.length) continue;
+        if (data.source !== "zip") continue; // ZIP 만 (TSV 는 아래 블록에서 처리)
+        if (data.baseDate === todayStr) continue; // 이미 오늘 배치
 
-        const currentAnchor = anchorDateByDepot[depot];
-        if (!currentAnchor) continue;
-        if (currentAnchor === todayStr) continue;
-
-        // 🔑 Wizard가 이미 오늘 배치로 넘긴 경우 — baseDate가 오늘이면 skip
-        // (anchor는 사용자 localStorage 마이그레이션 등으로 오늘이 아닐 수 있지만
-        //  names 배열은 이미 오늘 정답 배치임)
-        if (data.baseDate === todayStr) continue;
-
-        const anchorD = stripTime(new Date(currentAnchor));
-        const dd = diffDays(today, anchorD); // today - anchorDate
-        if (dd === 0) continue;
-
-        const len = data.names.length;
-
-        // 기존 공식으로 "오늘 각 사람이 있어야 할 gyobun 인덱스"를 계산:
-        //   names[i] 의 오늘 교번 = gyobun[mod(i + dd, len)]
-        // 새 배치에서는 dd=0 이므로 names_new[j] 의 오늘 교번 = gyobun[j]
-        // 즉 names_new[j] = names[i]  where  mod(i + dd, len) = j
-        //                 = names[mod(j - dd, len)]
-        const newNames = new Array(len);
-        const newPhones = new Array(len);
-        const oldPhones = data.phones || [];
-        for (let j = 0; j < len; j++) {
-          const oldI = (((j - dd) % len) + len) % len;
-          newNames[j] = data.names[oldI];
-          newPhones[j] = oldPhones[oldI] || "";
+        const rebuilt = rebaseDepotToToday(data, todayStr);
+        if (rebuilt !== data) {
+          nextMap[key] = rebuilt;
+          changed = true;
         }
-
-        nextMap[key] = { ...data, names: newNames, phones: newPhones };
-        changed = true;
       }
 
       if (changed) {
@@ -1684,12 +1664,17 @@ export default function App() {
       const todayDia = rowToday?.dia;
       let type = "work",
         diaNum = toDiaNum(todayDia),
-        daeNum = null;
+        daeNum = null,
+        origHasTilde = false; // 원본 교번에 이미 ~가 있는지 (대N~, 25~ 등)
       if (typeof todayDia === "string") {
         const clean = todayDia.replace(/\s/g, "");
         if (clean.startsWith("휴")) type = "holiday";
-        else if (clean.endsWith("~")) type = "biban";
-        else if (clean.includes("비번") || clean === "비") type = "biban";
+        // 🔑 대N~ / N~ 은 원본 gyobun 상의 "비번 자리" — biban 으로 분류하되
+        //    원본 표기를 그대로 유지하기 위해 플래그 기록.
+        else if (clean.endsWith("~")) {
+          type = "biban";
+          origHasTilde = true;
+        } else if (clean.includes("비번") || clean === "비") type = "biban";
         else if (/^대\d+$/i.test(clean)) {
           type = "dae";
           daeNum = Number(clean.replace(/[^0-9]/g, ""));
@@ -1701,7 +1686,15 @@ export default function App() {
         const n = toDiaNum(yRow?.dia);
         yDiaNum = Number.isFinite(n) ? n : null;
       }
-      return { name, row: rowToday, type, diaNum, daeNum, yDiaNum };
+      return {
+        name,
+        row: rowToday,
+        type,
+        diaNum,
+        daeNum,
+        origHasTilde,
+        yDiaNum,
+      };
     });
     const work = entries
       .filter((e) => e.type === "work" && Number.isFinite(e.diaNum))
@@ -1725,35 +1718,33 @@ export default function App() {
       .filter((e) => e.type === "holiday")
       .sort((a, b) => String(a.name).localeCompare(String(b.name), "ko"));
     return [...work, ...dae, ...biban, ...holiday].map(
-      ({ name, row, type }) => {
+      ({ name, row, type, origHasTilde }) => {
         let displayDia = row?.dia;
-        if (
-          typeof displayDia === "string" &&
-          displayDia.trim().startsWith("대")
-        ) {
-          const yRow = rowAtDateForNameWithOverride(name, yester);
-          const yDia = yRow?.dia;
-          const yNum = toDiaNum(yDia);
-          let prevNight = false;
-          if (Number.isFinite(yNum) && yNum >= nightDiaThreshold)
-            prevNight = true;
-          if (typeof yDia === "string" && /^대\s*\d+$/.test(yDia))
-            prevNight = true;
-          if (prevNight) displayDia = `${displayDia.replace(/\s+/g, "")}~`;
-        }
+
+        // dae (대N 근무) — 원본 교번을 그대로 표시.
+        // (과거 버그: 어제가 야간이면 "대N~" 로 덮어써서 비번처럼 보이게 만들었음.
+        //  "~" 는 원본 gyobun 에 이미 대N~ 형태로 존재하는 "비번 자리" 전용이므로
+        //  dae 자리에는 절대 덧붙이지 않는다.)
+
         if (type === "biban") {
-          const yRow = rowAtDateForNameWithOverride(name, yester);
-          const yDiaRaw = yRow?.dia;
-          const yDia =
-            typeof yDiaRaw === "string"
-              ? yDiaRaw.trim().replace(/\s+/g, "")
-              : yDiaRaw;
-          let prevNight = false;
-          const n = toDiaNum(yDia);
-          if (Number.isFinite(n) && n >= nightDiaThreshold) prevNight = true;
-          if (typeof yDia === "string" && /^대\d+$/.test(yDia))
-            prevNight = true;
-          displayDia = prevNight ? `${String(yDia)}~` : "비번";
+          // 원본이 이미 대N~, N~ 같이 ~ 붙은 교번이면 그대로 표시
+          if (origHasTilde && typeof displayDia === "string") {
+            displayDia = displayDia.replace(/\s+/g, "");
+          } else {
+            // override 등으로 "비번" 문자열이 들어온 경우 — 어제 야간 여부로 표기 결정
+            const yRow = rowAtDateForNameWithOverride(name, yester);
+            const yDiaRaw = yRow?.dia;
+            const yDia =
+              typeof yDiaRaw === "string"
+                ? yDiaRaw.trim().replace(/\s+/g, "")
+                : yDiaRaw;
+            let prevNight = false;
+            const n = toDiaNum(yDia);
+            if (Number.isFinite(n) && n >= nightDiaThreshold) prevNight = true;
+            if (typeof yDia === "string" && /^대\d+$/.test(yDia))
+              prevNight = true;
+            displayDia = prevNight ? `${String(yDia)}~` : "비번";
+          }
         }
         return { name, row: { ...row, dia: displayDia } };
       }

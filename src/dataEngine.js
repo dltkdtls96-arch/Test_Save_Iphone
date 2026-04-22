@@ -402,6 +402,86 @@ export function loadPathsIntoCommon(common, zipParsedFiles) {
 //  핵심 계산
 // ─────────────────────────────────────────────
 
+/**
+ * 한 기지의 common 데이터를 "오늘 배치"로 재정렬한 뒤 baseDate=today로 덮어쓴다.
+ *
+ *  - SetupWizard에서 선택한 기지에 적용하던 배치 로직을 단독 함수로 추출.
+ *  - 각 기지는 자기 info.txt 기준 (baseDate/baseName/baseCode) 으로만 계산.
+ *  - 이미 data.baseDate === todayStr 이면 그대로 반환 (멱등).
+ *
+ *  반환: 새 common 객체 ({ ...data, names, phones, baseDate, baseName, baseCode })
+ *        회전이 불가능/불필요하면 원본 data 반환.
+ */
+export function rebaseDepotToToday(data, todayStr) {
+  if (!data?.names?.length || !data?.gyobun?.length || !data?.baseDate) {
+    return data;
+  }
+  if (data.baseDate === todayStr) return data;
+
+  const norm = (s) => String(s || "").replace(/\s+/g, "");
+  const len = data.names.length;
+
+  const baseNameIdx = data.baseName
+    ? data.names.findIndex((n) => norm(n) === norm(data.baseName))
+    : -1;
+  const baseCodeIdx = data.baseCode
+    ? data.gyobun.findIndex(
+        (c) =>
+          String(c || "")
+            .trim()
+            .toLowerCase() ===
+          String(data.baseCode || "")
+            .trim()
+            .toLowerCase()
+      )
+    : -1;
+
+  const offset = diffDays(data.baseDate, todayStr); // today - baseDate
+
+  // 🔑 info.txt 기반 공식:
+  //   names_orig[k] 의 date 교번 = gyobun[(k - baseNameIdx + baseCodeIdx + offset) mod len]
+  //
+  // 목표: namesToday[i] = "오늘 gyobun[i] 를 받는 사람"
+  // 해:  k = mod(i + baseNameIdx - baseCodeIdx - offset, len)
+  //
+  // baseName / baseCode 를 못 찾으면 info.txt 무시 fallback:
+  //   names_orig[k] 의 date 교번 = gyobun[(k + offset) mod len]
+  //   → k = mod(i - offset, len)
+  const shift =
+    baseNameIdx >= 0 && baseCodeIdx >= 0
+      ? baseNameIdx - baseCodeIdx - offset
+      : -offset;
+
+  const namesToday = new Array(len);
+  const phonesToday = new Array(len);
+  const oldPhones = data.phones || [];
+  for (let i = 0; i < len; i++) {
+    const origIdx = positiveMod(i + shift, len);
+    namesToday[i] = data.names[origIdx];
+    phonesToday[i] = oldPhones[origIdx] || "";
+  }
+
+  // baseDate = today 로 옮기면서 baseName 도 오늘 배치 기준으로 갱신.
+  // (baseCodeIdx 자리에 있는 이름 = 오늘 baseCode 를 받는 사람)
+  const newBaseName =
+    baseCodeIdx >= 0 && baseCodeIdx < len
+      ? namesToday[baseCodeIdx]
+      : namesToday[0];
+  const newBaseCode =
+    baseCodeIdx >= 0 && baseCodeIdx < len
+      ? data.gyobun[baseCodeIdx]
+      : data.gyobun[0];
+
+  return {
+    ...data,
+    names: namesToday,
+    phones: phonesToday,
+    baseDate: todayStr,
+    baseName: newBaseName,
+    baseCode: newBaseCode,
+  };
+}
+
 export function getCodeForDate(common, name, dateStr, overrides = {}) {
   const overrideKey = `${common.depot}::${name}::${dateStr}`;
   if (overrides[overrideKey]) return overrides[overrideKey];
