@@ -15,6 +15,7 @@ import {
   restoreZipHandleFromDB,
   DEPOT_TO_ZIP_KEY,
   rebaseDepotToToday,
+  resetAllStorage,
 } from "./dataEngine";
 import SetupWizard from "./components/SetupWizard";
 import PersonEditModal from "./components/PersonEditModal";
@@ -391,11 +392,7 @@ function buildNameIndexMap(rows) {
 function getDaySrc(row, date, holidaySet) {
   const tType = getDayType(date, holidaySet);
   const src =
-    tType === "평"
-      ? row.weekday
-      : tType === "토"
-      ? row.saturday
-      : row.holiday;
+    tType === "평" ? row.weekday : tType === "토" ? row.saturday : row.holiday;
   const next =
     tType === "평"
       ? row.weekdayNext
@@ -1051,7 +1048,9 @@ export default function App() {
         return { in: parts[0] || "", out: parts[1] || "" };
       };
       const wtFor = (code) => {
-        const k = String(code || "").trim().toLowerCase();
+        const k = String(code || "")
+          .trim()
+          .toLowerCase();
         return {
           weekday: splitWT(common.worktime?.nor?.[k] || "----"),
           saturday: splitWT(common.worktime?.sat?.[k] || "----"),
@@ -1739,7 +1738,15 @@ export default function App() {
         const n = toDiaNum(yRow?.dia);
         yDiaNum = Number.isFinite(n) ? n : null;
       }
-      return { name, row: rowToday, type, diaNum, daeNum, origHasTilde, yDiaNum };
+      return {
+        name,
+        row: rowToday,
+        type,
+        diaNum,
+        daeNum,
+        origHasTilde,
+        yDiaNum,
+      };
     });
     const work = entries
       .filter((e) => e.type === "work" && Number.isFinite(e.diaNum))
@@ -2134,52 +2141,46 @@ export default function App() {
     e.target.value = "";
   }
 
-  function resetAll() {
-    if (!confirm("모든 저장 데이터를 초기화할까요?")) return;
+  async function resetAll() {
+    if (
+      !confirm(
+        "모든 저장 데이터를 초기화할까요?\n(ZIP 파일, 설정, 일일 변경 등 모두 삭제)"
+      )
+    )
+      return;
+
+    // 1) localStorage 전체 비우기 (setupDone 포함)
     try {
       localStorage.clear();
     } catch {}
-    setSelectedTab("home");
-    setSelectedDate(today);
-    setSelectedDepot("안심");
-    setAnchorDateByDepot(defaultAnchorByDepot);
-    setTablesByDepot({
-      안심: "",
-      월배: "",
-      경산: "",
-      문양: "",
-      교대: buildGyodaeTable(),
-      "교대(외)": buildGyodaeExtTable(),
-    });
-    setMyNameMap({
-      안심: "",
-      월배: "",
-      경산: "",
-      문양: "",
-      교대: "",
-      " 교대(외)": "",
-    });
-    setNightDiaByDepot({
-      안심: 25,
-      월배: 25,
-      문양: 24,
-      경산: 21,
-      교대: 5,
-      "교대(외)": 5,
-    });
-    setHolidaysText(DEFAULT_HOLIDAYS_25_26);
-    setHighlightMap({});
-    setRouteTargetName("");
-    setCommonMap(null);
-    if (typeof window !== "undefined") {
-      if ("caches" in window)
-        caches.keys().then((keys) => keys.forEach((key) => caches.delete(key)));
-      if ("serviceWorker" in navigator)
-        navigator.serviceWorker
-          .getRegistrations()
-          .then((regs) => regs.forEach((reg) => reg.unregister()));
-      window.location.reload();
+
+    // 2) IndexedDB 전체 삭제 (commonMap, zip blobs, zip handles 모두)
+    try {
+      await resetAllStorage();
+    } catch (e) {
+      console.warn("[resetAll] IDB 삭제 실패", e);
     }
+
+    // 3) Cache Storage + Service Worker 정리
+    try {
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+    } catch {}
+    try {
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+    } catch {}
+
+    // 4) 새로고침 — reload 이후 모든 state 가 기본값으로 다시 초기화되고
+    //    SetupWizard 가 자동 표시됨 (commonMap 없음 + setupDone 없음).
+    //    reload 전에 setState 는 의미 없으므로 호출하지 않음.
+    try {
+      window.location.reload();
+    } catch {}
   }
 
   const isPortrait = usePortraitOnly();
@@ -2664,14 +2665,21 @@ export default function App() {
                                     : "") +
                                   (isOutside
                                     ? "bg-gray-800/40 opacity-60"
-                                    : "bg-gray-700/60 hover:bg-gray-700") +
-                                  (isSelected ? " ring-2 ring-blue-400" : "")
+                                    : "bg-gray-700/60 hover:bg-gray-700")
                                 }
                                 aria-hidden={isHiddenRow ? "true" : undefined}
                                 tabIndex={isHiddenRow ? -1 : 0}
                                 style={{ padding: "0.5rem" }}
                                 title={`${diaLabel} / ${t.combo}/${t.in}/${t.out}`}
                               >
+                                {/* 오늘 빨강 테두리 (항상 유지) */}
+                                {isToday && (
+                                  <span className="absolute inset-0 rounded-lg ring-2 ring-red-400 pointer-events-none" />
+                                )}
+                                {/* 선택 파랑 테두리 — 오늘이 아닐 때만 */}
+                                {isSelected && !isToday && (
+                                  <span className="absolute inset-0 rounded-lg ring-2 ring-blue-400 pointer-events-none" />
+                                )}
                                 <div>
                                   <div className="flex items-center justify-between">
                                     <div
@@ -2681,9 +2689,6 @@ export default function App() {
                                     >
                                       {d.getDate()}
                                     </div>
-                                    {isToday && (
-                                      <span className="absolute inset-0 rounded-lg ring-2 ring-red-400 pointer-events-none" />
-                                    )}
                                   </div>
                                   <div
                                     className={
@@ -3578,6 +3583,7 @@ export default function App() {
                 theme,
                 setTheme,
                 onOpenSetupWizard: () => setShowSetupWizard(true),
+                onResetAll: resetAll,
                 commonMap,
                 setCommonMap,
                 peopleRows,
@@ -3653,13 +3659,6 @@ export default function App() {
               >
                 <Settings className="w-5 h-5 mb-0" />
                 설정
-              </button>
-              <button
-                onClick={resetAll}
-                className="flex flex-col items-center text-gray-400 hover:text-red-400"
-              >
-                <Upload className="w-5 h-5 mb-0 rotate-180" />
-                초기화
               </button>
             </div>
           </nav>
@@ -4109,7 +4108,9 @@ function CompareWeeklyBoard({
           return { in: parts[0] || "", out: parts[1] || "" };
         };
         const wtFor = (code) => {
-          const k = String(code || "").trim().toLowerCase();
+          const k = String(code || "")
+            .trim()
+            .toLowerCase();
           return {
             weekday: splitWT(common.worktime?.nor?.[k] || "----"),
             saturday: splitWT(common.worktime?.sat?.[k] || "----"),

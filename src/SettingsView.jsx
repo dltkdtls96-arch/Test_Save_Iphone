@@ -46,6 +46,7 @@ export default function SettingsView(props) {
     theme,
     setTheme,
     onOpenSetupWizard,
+    onResetAll,
     // ─── 새 props ───
     commonMap,
     setCommonMap,
@@ -452,7 +453,8 @@ export default function SettingsView(props) {
                   } else if (typeof row?.dia === "number") {
                     const outEmpty = !row?.weekday?.out;
                     const inEmpty = !row?.weekday?.in;
-                    if (inEmpty && !outEmpty) diaColor = "text-gray-400"; // 비번 자리
+                    if (inEmpty && !outEmpty)
+                      diaColor = "text-gray-400"; // 비번 자리
                     else if (outEmpty) diaColor = "text-sky-300"; // 야간
                     else diaColor = "text-yellow-300"; // 주간
                   }
@@ -835,6 +837,28 @@ export default function SettingsView(props) {
             </div>
           </section>
         )}
+
+        {/* ─── 위험한 작업 ─── */}
+        <section className="rounded-2xl bg-red-950/30 border border-red-800/50 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-semibold text-red-300">
+              ⚠️ 위험한 작업
+            </span>
+          </div>
+          <p className="text-[11px] text-red-300/80 mb-3 leading-relaxed">
+            아래 버튼을 누르면 <b>모든 저장 데이터가 영구 삭제</b>됩니다:
+            <br />
+            ZIP 파일, 인원 정보, 기준일, 공휴일, 일일 변경사항, 강조 색상, 그룹
+            설정 등 모두. 초기화 후에는 설정 마법사가 다시 실행됩니다.
+          </p>
+          <button
+            type="button"
+            onClick={() => onResetAll?.()}
+            className="w-full px-3 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition"
+          >
+            🗑️ 모든 데이터 초기화
+          </button>
+        </section>
       </div>
     </div>
   );

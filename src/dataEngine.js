@@ -932,3 +932,37 @@ function _offlineKoreanHolidays(y) {
     `${y}-12-25`,
   ];
 }
+
+// ─────────────────────────────────────────────
+//  전체 초기화 — IDB 삭제 + 메모리 ZIP 핸들 해제
+// ─────────────────────────────────────────────
+/**
+ * 모든 영구 저장 데이터를 초기화한다.
+ *  - IndexedDB (engineData + zipBlobs 전체 삭제)
+ *  - 메모리의 ZIP 핸들/이미지 캐시 해제
+ *
+ * 호출하는 쪽에서 추가로 localStorage.clear() 도 해야 완전 초기화됨.
+ */
+export async function resetAllStorage() {
+  // 1) 메모리의 ZIP 핸들/이미지 캐시 해제 (있다면)
+  try {
+    if (typeof _clearZipHandles === "function") _clearZipHandles();
+  } catch {}
+  try {
+    if (typeof _clearImageCache === "function") _clearImageCache();
+  } catch {}
+
+  // 2) IDB 전체 삭제 (깔끔한 방식 — DB 자체를 제거)
+  await new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(IDB_NAME);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve(); // 실패해도 진행
+      req.onblocked = () => resolve();
+      // 안전망 — 3초 뒤 강제 진행
+      setTimeout(resolve, 3000);
+    } catch {
+      resolve();
+    }
+  });
+}

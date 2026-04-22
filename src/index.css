@@ -361,14 +361,15 @@ html[data-theme="dark"] .bg-gray-800\/40 {
   opacity: 0.6;
 }
 
-/* 오늘/선택 링 */
+/* 오늘/선택 링
+   - ring-offset 제거: offset 때문에 링이 바깥으로 밀려 시각적 겹침이 생김.
+   - DOM 순서상 파랑(isSelected span)이 빨강(isToday span) 뒤에 렌더되어
+     자연스럽게 위에 덮이도록 되어 있으므로 z-index 조작 불필요. */
 .ring-blue-400 {
   --tw-ring-color: var(--accent) !important;
-  --tw-ring-offset-width: 2px;
 }
 .ring-red-400 {
   --tw-ring-color: var(--accent-red) !important;
-  --tw-ring-offset-width: 2px;
 }
 
 /* 요일 헤더 */
