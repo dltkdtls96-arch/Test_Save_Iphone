@@ -14,6 +14,7 @@ import {
   saveZipBlobToDB,
   fetchKoreanHolidaysRange,
   DEPOT_TO_ZIP_KEY,
+  diagnoseStorage,
 } from "./dataEngine";
 
 export default function SettingsView(props) {
@@ -86,10 +87,7 @@ export default function SettingsView(props) {
     const list = (peopleRows || []).map((row, origIdx) => ({ row, origIdx }));
     if (personSortMode === "name") {
       return list.sort((a, b) =>
-        String(a.row?.name || "").localeCompare(
-          String(b.row?.name || ""),
-          "ko"
-        )
+        String(a.row?.name || "").localeCompare(String(b.row?.name || ""), "ko")
       );
     }
     if (personSortMode === "dia") {
@@ -707,7 +705,11 @@ export default function SettingsView(props) {
                             value={editValue}
                             onChange={(e) => setEditValue(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === "Enter" && !e.nativeEvent.isComposing) commitEdit();
+                              if (
+                                e.key === "Enter" &&
+                                !e.nativeEvent.isComposing
+                              )
+                                commitEdit();
                               if (e.key === "Escape") cancelEdit();
                             }}
                           />
@@ -1063,6 +1065,43 @@ export default function SettingsView(props) {
             </div>
           </section>
         )}
+
+        {/* ─── 저장소 진단 ─── */}
+        <section className="rounded-2xl bg-slate-800/60 border border-slate-700 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm font-semibold text-slate-200">
+              🔍 저장소 진단
+            </span>
+          </div>
+          <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+            행로표 이미지가 날아갔을 때 이 버튼을 눌러 결과를 그대로 공유해
+            주세요. 복사 버튼을 누르면 클립보드에 담깁니다.
+          </p>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const report = await diagnoseStorage();
+                // 결과 프롬프트/복사 — 화면에도 표시
+                const el = document.getElementById("storage-diag-output");
+                if (el) el.textContent = report;
+                try {
+                  await navigator.clipboard?.writeText?.(report);
+                } catch {}
+              } catch (e) {
+                const el = document.getElementById("storage-diag-output");
+                if (el) el.textContent = "진단 실패: " + (e?.message || e);
+              }
+            }}
+            className="w-full px-3 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition"
+          >
+            🔍 진단 실행 + 결과 복사
+          </button>
+          <pre
+            id="storage-diag-output"
+            className="mt-3 whitespace-pre-wrap break-all text-[10px] text-slate-300 bg-black/40 rounded-lg p-2 max-h-80 overflow-auto"
+          ></pre>
+        </section>
 
         {/* ─── 위험한 작업 ─── */}
         <section className="rounded-2xl bg-red-950/30 border border-red-800/50 p-4">

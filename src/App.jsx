@@ -16,6 +16,7 @@ import {
   DEPOT_TO_ZIP_KEY,
   rebaseDepotToToday,
   resetAllStorage,
+  repairCommonMapFromZipBlob,
 } from "./dataEngine";
 import SetupWizard from "./components/SetupWizard";
 import PersonEditModal from "./components/PersonEditModal";
@@ -1334,14 +1335,38 @@ export default function App() {
     }
 
     // commonMap IndexedDB 복원 + ZIP 핸들 복원 (병렬)
+    // ⚠️ 중요: loaded=true 는 commonMap 복원 완료 후에만 호출해야 함.
+    // 그렇지 않으면 "tablesByDepot/anchorDateByDepot 동기화" useEffect 가
+    // commonMap=null 인 상태에서 실행되어 ZIP 기지의 paths 를 {} 로 덮어쓰는
+    // 레이스가 발생 (→ IDB commonMap 까지 망가져서 이미지 인덱스가 증발).
     Promise.all([
       loadCommonDataFromDB(),
       restoreZipHandleFromDB("latest").catch(() => false),
     ])
-      .then(([saved]) => {
-        if (saved) setCommonMap(saved);
+      .then(async ([saved]) => {
+        let current = saved;
+        // 🚑 망가진 commonMap 자동 복구:
+        //   과거 레이스 버그로 ZIP 기지 paths 가 비어있는 사용자를 위해,
+        //   IDB 에 ZIP blob 이 살아있으면 자동으로 이미지 인덱스를 재구성.
+        try {
+          const { repaired, commonMap: repairedMap } =
+            await repairCommonMapFromZipBlob(saved);
+          if (repaired) {
+            console.log("[App] commonMap 자동 복구 성공");
+            current = repairedMap;
+          }
+        } catch (e) {
+          console.warn("[App] commonMap 복구 시도 실패", e);
+        }
+        if (current) setCommonMap(current);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        // commonMap 반영은 다음 렌더에 일어나지만, setLoaded 가 그 뒤에
+        // 오면 "loaded=true 시점에 commonMap 이 아직 null" 인 창은 없음
+        // (setState 배치 처리로 같은 렌더에 둘 다 적용됨).
+        setLoaded(true);
+      });
 
     (async () => {
       try {
@@ -1349,16 +1374,20 @@ export default function App() {
           await navigator.storage.persist();
       } catch {}
     })();
-
-    setLoaded(true);
   }, []);
 
   // ── TSV → commonMap 자동 변환 (기존 사용자, commonMap 없을 때) ──
+  //
+  //  ⚠️ ZIP 기지(안심/월배/경산/문양) 는 이 effect 에서 만들지 않음.
+  //  ZIP 기지에 tablesByDepot 가 남아있을 수 있지만, 그건 ZIP 등록 시
+  //  자동 생성된 사본이라 별도 변환 대상이 아님. TSV 전용 기지만 변환.
   useEffect(() => {
     if (!loaded || commonMap) return;
     try {
+      const TSV_ONLY_DEPOTS = new Set(["교대", "교대(외)"]);
       const map = {};
       for (const depot of DEPOTS) {
+        if (!TSV_ONLY_DEPOTS.has(depot)) continue;
         const tsv = tablesByDepot[depot],
           anchor = anchorDateByDepot[depot];
         if (!tsv || !anchor) continue;
@@ -1387,13 +1416,27 @@ export default function App() {
   }, [loaded]);
 
   // ── tablesByDepot / anchorDateByDepot 바뀔 때 commonMap 동기화 ──
+  //
+  //  이 useEffect 의 목적: **교대/교대(외) 같은 TSV 기지**에서 TSV 텍스트가
+  //  변경됐을 때 commonMap 에도 반영하기 위함.
+  //
+  //  ⚠️ ZIP 기지(안심/월배/경산/문양) 는 여기서 절대 건드리면 안 됨.
+  //  과거 버그: commonMap 복원이 아직 안 끝난 상태(prev=null)에서 이 effect 가
+  //  실행되면 `prev?.[key]?.source === "zip"` 가드를 뚫고 안심 TSV 로
+  //  재구성하면서 paths(이미지 인덱스) 를 {} 로 덮어써서 IDB 까지 망가뜨렸음.
   useEffect(() => {
     if (!loaded) return;
+    // commonMap 이 아직 복원되지 않았으면 아무것도 하지 않음 — 레이스 방지
+    if (commonMap === null) return;
+
+    const TSV_ONLY_DEPOTS = new Set(["교대", "교대(외)"]); // ZIP 기지는 절대 제외
     setCommonMap((prev) => {
       const next = { ...(prev || {}) };
+      let changed = false;
       for (const depot of DEPOTS) {
+        if (!TSV_ONLY_DEPOTS.has(depot)) continue; // ZIP 기지는 건너뜀 (이중 방어)
         const key = DEPOT_TO_ZIP_KEY[depot] || depot;
-        if (prev?.[key]?.source === "zip") continue; // ZIP 데이터는 건드리지 않음
+        if (prev?.[key]?.source === "zip") continue; // 삼중 방어
         const tsv = tablesByDepot[depot],
           anchor = anchorDateByDepot[depot];
         if (!tsv || !anchor) continue;
@@ -1409,11 +1452,12 @@ export default function App() {
         updated.paths = existingPaths;
         updated.alarms = existingAlarms;
         next[key] = updated;
+        changed = true;
       }
-      saveCommonDataToDB(next).catch(() => {});
-      return next;
+      if (changed) saveCommonDataToDB(next).catch(() => {});
+      return changed ? next : prev;
     });
-  }, [tablesByDepot, anchorDateByDepot, loaded]);
+  }, [tablesByDepot, anchorDateByDepot, loaded, commonMap === null]);
 
   // ── 매일 anchorDate 자동 갱신 (오늘로 고정) ──
   //

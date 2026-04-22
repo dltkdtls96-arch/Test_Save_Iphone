@@ -1013,6 +1013,100 @@ export async function restoreZipHandleFromDB(slotKey = "latest") {
 }
 
 // ─────────────────────────────────────────────
+//  🚑 commonMap 복구
+//
+//  IDB zipBlobs 에 ZIP 은 살아있는데 commonMap.paths(이미지 인덱스)
+//  가 비어있거나 ZIP 기지가 통째로 누락된 경우 자동 복구.
+//  (과거 레이스 버그로 망가진 commonMap 을 자동으로 수선)
+//
+//  반환: { repaired: boolean, commonMap: object|null }
+//    - repaired=true 면 호출자가 반환된 commonMap 으로 state 교체 필요
+//    - repaired=false 면 복구할 필요 없었거나 ZIP 이 없어서 복구 불가
+// ─────────────────────────────────────────────
+export async function repairCommonMapFromZipBlob(existingCommonMap) {
+  try {
+    const rec = await loadZipBlobFromDB("latest");
+    if (!rec?.blob) {
+      return { repaired: false, commonMap: existingCommonMap };
+    }
+
+    // ZIP 기지(as/wb/ks/my) 중 복구가 필요한 항목 식별.
+    //
+    // ⚠️ source 값은 체크하지 않음. 과거 레이스 버그로 ZIP 기지의 source 가
+    // "tsv" 로 오염됐을 수 있기 때문 (안심 예시: TSV→Common 자동 변환이
+    // 먼저 실행되면서 as.source="tsv" 가 되어버림). source 와 무관하게
+    // "ZIP 기지 key 이고 이미지 인덱스가 0개면 복구" 로 판단.
+    const needsRepair = [];
+    for (const zipKey of Object.keys(ZIP_KEY_TO_DEPOT)) {
+      const entry = existingCommonMap?.[zipKey];
+      if (!entry) {
+        needsRepair.push(zipKey);
+        continue;
+      }
+      // 이미지 인덱스 수가 0 이면 복구 대상
+      const totalImgs = Object.values(entry.paths || {}).reduce(
+        (acc, folder) => acc + Object.keys(folder || {}).length,
+        0
+      );
+      if (totalImgs === 0) needsRepair.push(zipKey);
+    }
+
+    if (needsRepair.length === 0) {
+      return { repaired: false, commonMap: existingCommonMap };
+    }
+
+    console.log(`[repairCommonMap] 복구 시작 — 대상: ${needsRepair.join(",")}`);
+
+    // ZIP 을 다시 파싱해서 fresh commonMap 을 얻는다
+    const freshMap = await loadZipToCommonMap(rec.blob);
+    if (!Object.keys(freshMap).length) {
+      return { repaired: false, commonMap: existingCommonMap };
+    }
+
+    // 기존 commonMap 과 fresh 를 머지:
+    //   - needsRepair 대상 기지: fresh 의 paths/alarms/worktime 로 덮어쓰되,
+    //     사용자가 편집했을 수 있는 names/phones/gyobun/baseDate 등은
+    //     기존 값이 있으면 그대로 유지.
+    //   - 그 외 기지(교대/교대(외) 등): 기존 그대로.
+    //
+    // ⚠️ source 값은 체크하지 않음. 과거 레이스로 source="tsv" 가 되어도
+    // names 배열은 보존됐을 가능성이 높으므로 값 존재 여부로만 판단.
+    const merged = { ...(existingCommonMap || {}) };
+    for (const zipKey of needsRepair) {
+      const fresh = freshMap[zipKey];
+      if (!fresh) continue;
+      const existing = existingCommonMap?.[zipKey] || {};
+      merged[zipKey] = {
+        ...fresh,
+        names: existing.names?.length ? existing.names : fresh.names,
+        phones: existing.phones?.length ? existing.phones : fresh.phones,
+        gyobun: existing.gyobun?.length ? existing.gyobun : fresh.gyobun,
+        baseDate: existing.baseDate || fresh.baseDate,
+        baseCode: existing.baseCode || fresh.baseCode,
+        baseName: existing.baseName || fresh.baseName,
+        // source 를 명시적으로 "zip" 으로 되돌림 (오염 방지)
+        source: "zip",
+      };
+    }
+
+    // IDB 에 저장 (다음 로드부터는 복구 불필요)
+    try {
+      await saveCommonDataToDB(merged);
+    } catch (e) {
+      console.warn("[repairCommonMap] IDB 저장 실패", e);
+    }
+
+    console.log(
+      `[repairCommonMap] 복구 완료 — ${needsRepair.length}개 기지 paths 재구성`
+    );
+    return { repaired: true, commonMap: merged };
+  } catch (err) {
+    console.error("[repairCommonMap] 실패:", err);
+    return { repaired: false, commonMap: existingCommonMap };
+  }
+}
+
+// ─────────────────────────────────────────────
 //  한국 공휴일 자동
 // ─────────────────────────────────────────────
 
@@ -1098,4 +1192,232 @@ export async function resetAllStorage() {
       resolve();
     }
   });
+}
+
+// ─────────────────────────────────────────────
+//  🔍 저장소 진단
+//
+//  행로표 이미지가 날아가는 원인을 정확히 파악하기 위한 함수.
+//  IndexedDB, Cache Storage, 메모리 핸들의 현재 상태를 문자열로 반환.
+// ─────────────────────────────────────────────
+export async function diagnoseStorage() {
+  const lines = [];
+  const push = (l) => lines.push(l);
+
+  push("=== 저장소 진단 ===");
+  push("시각: " + new Date().toISOString());
+  try {
+    push(
+      "PWA standalone: " +
+        !!(
+          window.matchMedia?.("(display-mode: standalone)")?.matches ||
+          window.navigator?.standalone
+        )
+    );
+  } catch {}
+
+  // 1) navigator.storage
+  try {
+    if (navigator.storage?.persisted) {
+      push("persisted: " + (await navigator.storage.persisted()));
+    } else {
+      push("persisted: API 없음");
+    }
+    if (navigator.storage?.estimate) {
+      const est = await navigator.storage.estimate();
+      const usageMB = Math.round(((est.usage || 0) / 1024 / 1024) * 10) / 10;
+      const quotaMB = Math.round((est.quota || 0) / 1024 / 1024);
+      push(`storage: ${usageMB}MB / ${quotaMB}MB`);
+    }
+  } catch (e) {
+    push("storage API err: " + (e?.message || e));
+  }
+
+  // 2) IndexedDB - zipBlobs 스토어
+  try {
+    const db = await openDB();
+    push("IDB stores: " + Array.from(db.objectStoreNames).join(","));
+
+    await new Promise((resolve) => {
+      const tx = db.transaction(STORE_ZIPS, "readonly");
+      const store = tx.objectStore(STORE_ZIPS);
+      const allKeys = store.getAllKeys();
+      allKeys.onsuccess = () => {
+        push("IDB zipBlobs keys: " + JSON.stringify(allKeys.result || []));
+      };
+      const req = store.get("latest");
+      req.onsuccess = () => {
+        const rec = req.result;
+        if (rec?.blob) {
+          const sizeKB = Math.round(rec.blob.size / 1024);
+          const savedAt = rec.savedAt
+            ? new Date(rec.savedAt).toISOString()
+            : "?";
+          push(
+            `IDB latest: ✅ ${
+              rec.name || "?"
+            } / ${sizeKB}KB / savedAt=${savedAt}`
+          );
+        } else {
+          push("IDB latest: ❌ 없음");
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => {
+        push("IDB read err: " + tx.error?.message);
+        resolve();
+      };
+    });
+
+    // commonMap 크기
+    await new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get("commonMap");
+      req.onsuccess = () => {
+        const rec = req.result;
+        if (rec?.data) {
+          const keys = Object.keys(rec.data);
+          push(`IDB commonMap: ✅ ${keys.length}개 기지 [${keys.join(",")}]`);
+          for (const k of keys) {
+            const pathFolders = Object.keys(rec.data[k]?.paths || {});
+            const totalImgs = pathFolders.reduce(
+              (acc, f) => acc + Object.keys(rec.data[k].paths[f] || {}).length,
+              0
+            );
+            push(`   └ ${k}: ${totalImgs}개 이미지 인덱스`);
+          }
+        } else {
+          push("IDB commonMap: ❌ 없음");
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch (e) {
+    push("IDB open err: " + (e?.message || e));
+  }
+
+  // 3) Cache Storage
+  try {
+    if (typeof caches !== "undefined") {
+      const names = await caches.keys();
+      push("Cache Storage names: " + JSON.stringify(names));
+      if (names.includes(ZIP_CACHE_NAME)) {
+        const cache = await caches.open(ZIP_CACHE_NAME);
+        const reqs = await cache.keys();
+        push(`Cache ${ZIP_CACHE_NAME} entries: ${reqs.length}`);
+        for (const r of reqs) {
+          const res = await cache.match(r);
+          const blob = res ? await res.blob() : null;
+          push(
+            `   └ ${r.url}: ${
+              blob ? Math.round(blob.size / 1024) + "KB" : "empty"
+            }`
+          );
+        }
+      } else {
+        push(`Cache ${ZIP_CACHE_NAME}: ❌ 없음`);
+      }
+    } else {
+      push("Cache Storage: API 없음");
+    }
+  } catch (e) {
+    push("Cache Storage err: " + (e?.message || e));
+  }
+
+  // 4) 메모리 _zipHandles
+  push(
+    `메모리 _zipHandles: ${_zipHandles.size}개 [${Array.from(
+      _zipHandles.keys()
+    ).join(",")}]`
+  );
+  push(`메모리 _imageCache: ${_imageCache.size}개`);
+
+  // 5) localStorage 주요 키
+  try {
+    const lsKeys = Object.keys(localStorage);
+    push("localStorage keys: " + lsKeys.length + "개");
+    const saved = localStorage.getItem("workCalendarSettingsV3");
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      const tbd = parsed.tablesByDepot || {};
+      const tbdSummary = Object.entries(tbd)
+        .map(([k, v]) => `${k}:${v ? v.length + "c" : "∅"}`)
+        .join(" ");
+      push("  tablesByDepot: " + tbdSummary);
+    }
+  } catch (e) {
+    push("localStorage err: " + (e?.message || e));
+  }
+
+  // 6) 🔥 실제 이미지 로드 테스트 — 각 depot 에서 첫 이미지 하나씩 꺼내봄
+  push("");
+  push("=== 이미지 로드 테스트 ===");
+  try {
+    for (const [depotKey, zip] of _zipHandles) {
+      try {
+        // ZIP 파일 목록에서 이 depot의 첫 이미지 찾기
+        const allPaths = Object.keys(zip.files);
+        const depotImages = allPaths.filter((p) => {
+          if (zip.files[p].dir) return false;
+          if (!/\.(png|jpg|jpeg)$/i.test(p)) return false;
+          // 경로에 이 depot 키가 포함돼야 함
+          return (
+            p.toLowerCase().includes(`/${depotKey}/path/`) ||
+            p.toLowerCase().startsWith(`${depotKey}/path/`)
+          );
+        });
+        push(`${depotKey}: ZIP 내 이미지 ${depotImages.length}개`);
+        if (depotImages.length > 0) {
+          push(`  └ 샘플 경로: ${depotImages[0]}`);
+          // 실제 한 장 꺼내보기
+          const sample = depotImages[0];
+          const parts = sample.split("/");
+          // 경로 구조 파악: 보통 [rootFolder/]depotKey/path/folder/num.png
+          let folder = "",
+            num = "";
+          const pathIdx = parts.indexOf("path");
+          if (pathIdx >= 0 && pathIdx + 2 < parts.length) {
+            folder = parts[pathIdx + 1];
+            num = parts[pathIdx + 2].replace(/\.(png|jpg|jpeg)$/i, "");
+          }
+          if (folder && num) {
+            try {
+              const url = await _lazyLoadImageFromZip(
+                zip,
+                depotKey,
+                folder,
+                num
+              );
+              if (url) {
+                push(`  └ ✅ 로드 성공 (folder=${folder}, num=${num})`);
+              } else {
+                push(
+                  `  └ ❌ 로드 실패 (folder=${folder}, num=${num}) — candidates 전부 매칭 안 됨`
+                );
+                push(
+                  `     rootFolders=${Array.from(
+                    new Set(
+                      allPaths
+                        .filter((p) => p.includes("/"))
+                        .map((p) => p.split("/")[0])
+                    )
+                  ).join(",")}`
+                );
+              }
+            } catch (e) {
+              push(`  └ ❌ 예외: ${e?.message || e}`);
+            }
+          }
+        }
+      } catch (e) {
+        push(`${depotKey}: 예외 ${e?.message || e}`);
+      }
+    }
+  } catch (e) {
+    push("이미지 테스트 err: " + (e?.message || e));
+  }
+
+  return lines.join("\n");
 }
