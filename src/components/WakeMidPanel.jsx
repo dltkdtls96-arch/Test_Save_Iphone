@@ -496,9 +496,13 @@ export default function WakeMidPanel({
   /* ===== 기준시각 계산 ===== */
   const midKey = pickMidKey(routeCombo);
 
+  // ~비번 코드 (예: "25~") 인지 — true 이면 midKey 없어도 zip 호출
+  const isTildeOff = /~$/.test(String(routeCode || "").trim());
+
   // 우선순위: 1) ZIP alarm (가장 정확) → 2) row 중간열 → 3) 소속별 하드코딩 테이블
   const [baseHM, baseHMSource] = React.useMemo(() => {
-    if (!midKey) return ["", ""];
+    // 비번(~) 코드일 때는 midKey 없어도 일단 zip 시도
+    if (!midKey && !isTildeOff) return ["", ""];
 
     // 1) ZIP alarm 기반 (제일 우선)
     if (commonData?.alarms && routeCode) {
@@ -522,15 +526,20 @@ export default function WakeMidPanel({
       }
     }
 
-    // 2) TSV row 중간열 (구 방식)
-    const fromRow = toHM(row?.[midKey]);
-    if (fromRow) return [fromRow, "row"];
+    // 2) TSV row 중간열 (구 방식) — midKey 있을 때만
+    if (midKey) {
+      const fromRow = toHM(row?.[midKey]);
+      if (fromRow) return [fromRow, "row"];
 
-    // 3) 하드코딩 MID_TABLES 폴백
-    const fromDepot = lookupMidFromDepot(selectedDepot, midKey, routeDia);
-    return [fromDepot || "", fromDepot ? "table" : ""];
+      // 3) 하드코딩 MID_TABLES 폴백
+      const fromDepot = lookupMidFromDepot(selectedDepot, midKey, routeDia);
+      return [fromDepot || "", fromDepot ? "table" : ""];
+    }
+
+    return ["", ""];
   }, [
     midKey,
+    isTildeOff,
     row,
     selectedDepot,
     routeDia,
