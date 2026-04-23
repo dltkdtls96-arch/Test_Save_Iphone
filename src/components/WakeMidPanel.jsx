@@ -876,68 +876,36 @@ export default function WakeMidPanel({
         </div>
       </AccordionSection>
 
-      {/* 예정 알람 시간 미리보기 (시간순 정렬) */}
+      {/* 예정 알람 시간 미리보기 */}
       {baseDate && (
-        <div className="rounded-xl bg-gray-900/60 p-3 text-[11px] text-gray-200">
-          <div className="mb-2 text-gray-300">
-            예정 알람 시간 (기준 <b>{baseHM}</b>)
+        <div className="rounded-xl bg-gray-900/60 p-3 text-[11px] text-gray-200 space-y-1">
+          <div>예정 알람 시간</div>
+
+          <div>
+            차받기 {fmtHMfromDate(subMinutes(baseDate, cfg.preCarReceiveMin))}
+          </div>
+          <div>
+            출무 {fmtHMfromDate(subMinutes(baseDate, cfg.preMidWorkMin))}
+          </div>
+          <div>
+            출고 {fmtHMfromDate(subMinutes(baseDate, cfg.preMidOutMin))}
           </div>
 
-          {(() => {
-            const items = [];
+          <div>
+            야간 범위 ({nightCount}개){" "}
+            {(() => {
+              const start = Math.max(cfg.nightStartMin, cfg.nightEndMin);
+              const end = Math.min(cfg.nightStartMin, cfg.nightEndMin);
+              const step = Math.max(1, cfg.nightStepMin);
 
-            // 단일 알람들
-            items.push({
-              time: subMinutes(baseDate, cfg.preCarReceiveMin),
-              kind: "차받기",
-              offset: cfg.preCarReceiveMin,
-              color: "text-cyan-300",
-            });
-            items.push({
-              time: subMinutes(baseDate, cfg.preMidWorkMin),
-              kind: "출무",
-              offset: cfg.preMidWorkMin,
-              color: "text-indigo-300",
-            });
-            items.push({
-              time: subMinutes(baseDate, cfg.preMidOutMin),
-              kind: "출고",
-              offset: cfg.preMidOutMin,
-              color: "text-rose-300",
-            });
-
-            // 야간 알람들
-            const start = Math.max(cfg.nightStartMin, cfg.nightEndMin);
-            const end = Math.min(cfg.nightStartMin, cfg.nightEndMin);
-            const step = Math.max(1, cfg.nightStepMin);
-            for (let m = start; m >= end; m -= step) {
-              items.push({
-                time: subMinutes(baseDate, m),
-                kind: "야간",
-                offset: m,
-                color: "text-orange-300",
-              });
-            }
-
-            // 시간순 정렬 (오름차순)
-            items.sort((a, b) => a.time.getTime() - b.time.getTime());
-
-            return (
-              <ul className="space-y-0.5">
-                {items.map((it, i) => (
-                  <li key={i} className="flex items-center gap-2">
-                    <span className="font-mono text-gray-100 w-12">
-                      {fmtHMfromDate(it.time)}
-                    </span>
-                    <span className={it.color}>{it.kind}</span>
-                    <span className="text-gray-500">
-                      ({it.offset}분 전)
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            );
-          })()}
+              const arr = [];
+              for (let m = start; m >= end; m -= step) {
+                const t = subMinutes(baseDate, m);
+                arr.push(fmtHMfromDate(t));
+              }
+              return arr.length ? arr.join(", ") : "-";
+            })()}
+          </div>
         </div>
       )}
     </div>
