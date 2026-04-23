@@ -50,9 +50,13 @@ const ALL_DEPOTS = ["안심", "월배", "경산", "문양"];
 
 // ⭐ 통합 교번 데이터 ZIP 다운로드 URL
 // (4개 소속 통합본 — 안심/월배/경산/문양)
-// TODO: 데이터가 업데이트되면 이 URL만 바꾸면 됨
+// GitHub Release는 CORS 헤더를 안 붙여주므로 corsproxy.io 경유.
+// 데이터 업데이트 시 Release에 새 tag로 올리고 아래 URL만 수정하면 됨.
 const DATA_DOWNLOAD_URL =
-  "https://github.com/dltkdtls96-arch/Test_Save_Iphone/releases/download/v1.0-data/2026.04.23.zip";
+  "https://corsproxy.io/?" +
+  encodeURIComponent(
+    "https://github.com/dltkdtls96-arch/Test_Save_Iphone/releases/download/v1.0-data/2026.04.23.zip"
+  );
 
 // 오늘 날짜 (로컬)
 function todayStr() {
@@ -140,7 +144,7 @@ export default function SetupWizard({
       }
 
       const blob = new Blob(chunks, { type: "application/zip" });
-      const fileName = "2026.04.23.zip"; // URL에서 파생
+      const fileName = "gb_data.zip";
 
       // 2) zip 파싱
       setAutoDLProgress({ phase: "parsing", loaded: 0, total: 0 });
@@ -486,14 +490,14 @@ export default function SetupWizard({
                     <div className="mt-2 p-2 rounded-lg bg-rose-900/40 border border-rose-500/50 text-rose-200 text-[11px]">
                       <div className="font-semibold mb-1">❌ 실패</div>
                       <div>{autoDLError}</div>
-                      <a
-                        href={DATA_DOWNLOAD_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-block mt-2 text-emerald-300 underline"
+                      <button
+                        type="button"
+                        onClick={handleAutoDownload}
+                        disabled={autoDLLoading}
+                        className="mt-2 px-2 py-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-semibold"
                       >
-                        수동 다운로드 링크 열기 ↗
-                      </a>
+                        다시 시도
+                      </button>
                     </div>
                   )}
 
