@@ -426,7 +426,6 @@ export function rebaseDepotToToday(data, todayStr) {
   if (!data?.names?.length || !data?.gyobun?.length || !data?.baseDate) {
     return data;
   }
-  if (data.baseDate === todayStr) return data;
 
   const norm = (s) => String(s || "").replace(/\s+/g, "");
   const len = data.names.length;
@@ -452,6 +451,12 @@ export function rebaseDepotToToday(data, todayStr) {
     baseNameIdx >= 0 && baseCodeIdx >= 0
       ? baseNameIdx - baseCodeIdx - offset
       : -offset;
+
+  // shift가 0이면 (mod len 이 아닌 실제 0) 이미 오늘 기준으로 정렬됨 — 그대로 반환
+  // 단, baseDate !== todayStr 인데 shift가 우연히 0의 배수가 되는 것도 OK
+  if (shift % len === 0 && data.baseDate === todayStr) {
+    return data;
+  }
 
   const namesToday = new Array(len);
   const phonesToday = new Array(len);
