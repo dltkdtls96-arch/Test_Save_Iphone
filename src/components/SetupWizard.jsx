@@ -91,6 +91,11 @@ export default function SetupWizard({
   const [pathCommonMap, setPathCommonMap] = useState(null);
   const [pathZipFileName, setPathZipFileName] = useState("");
 
+  // 자동 다운로드 관련
+  const [autoDLLoading, setAutoDLLoading] = useState(false);
+  const [autoDLError, setAutoDLError] = useState("");
+  const [autoDLProgress, setAutoDLProgress] = useState(null); // { phase, loaded, total }
+
   // 소속 / 이름 / 교번
   const [depot, setDepot] = useState(defaultDepot);
   const [myName, setMyName] = useState("");
@@ -98,6 +103,73 @@ export default function SetupWizard({
 
   const zipInputRef = useRef(null);
   const pathZipInputRef = useRef(null);
+
+  // ─────────────────────────────────────────
+  //  "교번 데이터 없으세요?" → 자동 다운로드 + 파싱
+  // ─────────────────────────────────────────
+  async function handleAutoDownload() {
+    setAutoDLLoading(true);
+    setAutoDLError("");
+    setAutoDLProgress({ phase: "downloading", loaded: 0, total: 0 });
+
+    try {
+      // 1) fetch로 zip 다운로드 (진행률 표시)
+      const res = await fetch(DATA_DOWNLOAD_URL);
+      if (!res.ok) {
+        throw new Error(`다운로드 실패 (HTTP ${res.status})`);
+      }
+
+      const total = Number(res.headers.get("Content-Length")) || 0;
+      const reader = res.body?.getReader();
+      const chunks = [];
+      let loaded = 0;
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.length;
+          setAutoDLProgress({ phase: "downloading", loaded, total });
+        }
+      } else {
+        // ReadableStream 미지원 — fallback
+        const blob = await res.blob();
+        chunks.push(new Uint8Array(await blob.arrayBuffer()));
+        loaded = chunks[0].length;
+      }
+
+      const blob = new Blob(chunks, { type: "application/zip" });
+      const fileName = "2026.04.23.zip"; // URL에서 파생
+
+      // 2) zip 파싱
+      setAutoDLProgress({ phase: "parsing", loaded: 0, total: 0 });
+      const map = await loadZipToCommonMap(blob, (p) => {
+        setAutoDLProgress({ phase: p.phase, loaded: p.loaded, total: p.total });
+      });
+      if (!Object.keys(map).length) {
+        throw new Error("ZIP 안에 유효한 데이터가 없습니다.");
+      }
+
+      // 3) IDB 저장
+      await saveZipBlobToDB(blob, fileName);
+      await saveCommonDataToDB(map);
+
+      // 4) ZIP 모드로 전환 + Step 3 (소속 선택) 으로 진행
+      setMode("zip");
+      setCommonMap(map);
+      setZipFileName(fileName);
+      setStep(3);
+    } catch (err) {
+      console.error("[자동 다운로드] 실패", err);
+      setAutoDLError(
+        err.message ||
+          "다운로드 중 오류가 발생했습니다. 링크를 직접 눌러 수동으로 받아주세요."
+      );
+    } finally {
+      setAutoDLLoading(false);
+    }
+  }
 
   // ─────────────────────────────────────────
   //  Step 2a: ZIP 파일 등록
@@ -364,27 +436,71 @@ export default function SetupWizard({
                     소속의 교번 ZIP 파일이 없으신가요?
                   </p>
                   <p className="text-gray-400 mb-3">
-                    아래 링크에서 통합 데이터 파일을 받을 수 있습니다.
+                    아래 버튼을 누르면 통합 데이터를 자동으로 받아 앱에 바로
+                    적용합니다.
                     <br />
-                    파일을 다운받은 후 위의{" "}
-                    <span className="text-indigo-300 font-medium">
-                      📦 ZIP 파일 방식
-                    </span>{" "}
-                    을 눌러 등록하세요.
+                    <span className="text-[11px] text-gray-500">
+                      (별도 업로드 없이 자동 등록)
+                    </span>
                   </p>
-                  <a
-                    href={DATA_DOWNLOAD_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition"
+
+                  <button
+                    type="button"
+                    onClick={handleAutoDownload}
+                    disabled={autoDLLoading}
+                    className="w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-600 disabled:cursor-wait text-white text-sm font-semibold transition"
                   >
-                    <span>📥</span>
-                    <span>교번 데이터 다운받기</span>
-                    <span className="opacity-70">↗</span>
-                  </a>
+                    {autoDLLoading ? (
+                      <>
+                        <span className="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                        <span>
+                          {autoDLProgress?.phase === "downloading"
+                            ? (() => {
+                                const { loaded = 0, total = 0 } =
+                                  autoDLProgress || {};
+                                const mb = (n) => (n / 1024 / 1024).toFixed(1);
+                                if (total > 0) {
+                                  const pct = Math.round((loaded / total) * 100);
+                                  return `다운로드 중… ${pct}% (${mb(
+                                    loaded
+                                  )}/${mb(total)}MB)`;
+                                }
+                                return `다운로드 중… ${mb(loaded)}MB`;
+                              })()
+                            : autoDLProgress?.phase === "reading_texts"
+                            ? `파일 분석 중… ${autoDLProgress.loaded}/${autoDLProgress.total}`
+                            : autoDLProgress?.phase === "parsing"
+                            ? "데이터 파싱 중…"
+                            : "처리 중…"}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span>📥</span>
+                        <span>교번 데이터 자동 등록</span>
+                      </>
+                    )}
+                  </button>
+
+                  {autoDLError && (
+                    <div className="mt-2 p-2 rounded-lg bg-rose-900/40 border border-rose-500/50 text-rose-200 text-[11px]">
+                      <div className="font-semibold mb-1">❌ 실패</div>
+                      <div>{autoDLError}</div>
+                      <a
+                        href={DATA_DOWNLOAD_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-block mt-2 text-emerald-300 underline"
+                      >
+                        수동 다운로드 링크 열기 ↗
+                      </a>
+                    </div>
+                  )}
+
                   <p className="mt-3 text-[11px] text-gray-500">
                     * 안심 / 월배 / 경산 / 문양 4개 소속 데이터가 포함된
                     통합본입니다.
+                    <br />* 약 50MB 파일 — 처음 한 번만 다운받습니다.
                   </p>
                 </div>
               )}
