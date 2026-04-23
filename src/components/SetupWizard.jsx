@@ -50,13 +50,9 @@ const ALL_DEPOTS = ["안심", "월배", "경산", "문양"];
 
 // ⭐ 통합 교번 데이터 ZIP 다운로드 URL
 // (4개 소속 통합본 — 안심/월배/경산/문양)
-// GitHub Release는 CORS 헤더를 안 붙여주므로 corsproxy.io 경유.
-// 데이터 업데이트 시 Release에 새 tag로 올리고 아래 URL만 수정하면 됨.
-const DATA_DOWNLOAD_URL =
-  "https://corsproxy.io/?" +
-  encodeURIComponent(
-    "https://github.com/dltkdtls96-arch/Test_Save_Iphone/releases/download/v1.0-data/2026.04.23.zip"
-  );
+// public/data/ 폴더에 zip을 커밋해두고 상대 경로로 fetch.
+// 같은 도메인이라 CORS 문제 없음. 데이터 업데이트 시 같은 경로에 덮어쓰고 push.
+const DATA_DOWNLOAD_URL = "/data/gb_data.zip";
 
 // 오늘 날짜 (로컬)
 function todayStr() {
