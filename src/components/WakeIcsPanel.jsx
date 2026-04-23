@@ -201,15 +201,20 @@ export default function WakeIcsPanel(props) {
   /* ===== 범위 알람(출근 N분 전 ~ M분 전, 간격 X분) ===== */
   const MAX_RANGE_MIN = 720;
 
+  // 0~30분 → 1분 단위, 30~120분 → 5분 단위, 120~720분 → 10분 단위
   const minuteOptions = React.useMemo(() => {
     const arr = [];
-    for (let m = 0; m <= MAX_RANGE_MIN; m += 1) arr.push(m);
+    for (let m = 0; m <= 30; m += 1) arr.push(m);
+    for (let m = 35; m <= 120; m += 5) arr.push(m);
+    for (let m = 130; m <= MAX_RANGE_MIN; m += 10) arr.push(m);
     return arr;
   }, []);
 
+  // 간격: 1~10분 1단위, 10~60분 5단위
   const stepOptions = React.useMemo(() => {
     const arr = [];
-    for (let m = 1; m <= 120; m += 1) arr.push(m);
+    for (let m = 1; m <= 10; m += 1) arr.push(m);
+    for (let m = 15; m <= 60; m += 5) arr.push(m);
     return arr;
   }, []);
 
