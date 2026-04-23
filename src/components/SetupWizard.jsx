@@ -271,41 +271,75 @@ export default function SetupWizard({
         rebuilt[k] = rebaseDepotToToday(dv, today);
       }
 
-      // 새 이름 주입: 선택한 기지의 myCode 자리에 myName (덮어쓰기)
-      // — 다른 기지에는 적용하지 않는다.
+      // 🔧 사용자가 선택한 (myName, myCode) 조합을 강제 적용.
+      // info.txt 의 basedata 가 부정확해서 rebaseDepotToToday 결과가 어긋나도
+      // 사용자가 "오늘 내가 X 교번" 이라고 지정한 건 신뢰해서 맞춘다.
+      //
+      // 케이스 분리:
+      //  A) myName 이 이미 명단에 있음 → 그 사람이 오늘 myCode 자리에 오도록
+      //     전체 names 배열을 rotate (모든 사람 배치가 shift 만큼 이동).
+      //  B) myName 이 명단에 없음 (새 이름) → 기존 배치 유지하고
+      //     myCode 자리의 이름만 myName 으로 덮어쓰기 (단순 교체).
       const myData = rebuilt[key];
-      if (
-        myName &&
-        myData?.names?.length &&
-        myData?.gyobun?.length &&
-        !myData.names.includes(myName)
-      ) {
-        const codeIdx = myData.gyobun.findIndex(
-          (c) => c.trim().toLowerCase() === myCode.trim().toLowerCase()
-        );
-        if (codeIdx >= 0) {
-          const newNames = [...myData.names];
-          const newPhones = [...(myData.phones || [])];
-          while (newPhones.length < newNames.length) newPhones.push("");
-          newNames[codeIdx] = myName;
-          newPhones[codeIdx] = "";
+      if (myName && myData?.names?.length && myData?.gyobun?.length) {
+        const norm = (s) => String(s || "").replace(/\s+/g, "");
+        const normLow = (s) =>
+          String(s || "")
+            .trim()
+            .toLowerCase();
+        const len = myData.names.length;
 
-          // baseName 도 baseCodeIdx 자리 이름으로 다시 계산
-          // (myCode == baseCode 인 경우 baseName 이 myName 으로 바뀌어야 함)
-          const norm = (s) => String(s || "").replace(/\s+/g, "");
+        const codeIdx = myData.gyobun.findIndex(
+          (c) => normLow(c) === normLow(myCode)
+        );
+
+        if (codeIdx >= 0) {
+          const existingIdx = myData.names.findIndex(
+            (n) => norm(n) === norm(myName)
+          );
+
+          let newNames;
+          let newPhones;
+
+          if (existingIdx >= 0) {
+            // A) 기존 이름 — 전체를 rotate 해서 myName 이 codeIdx 자리로 가게 함
+            // 필요한 shift: myName 이 지금 existingIdx 에 있고, codeIdx 로 가야 함.
+            // namesToday[codeIdx] = 원본names[(codeIdx + shift) mod len]
+            //    → existingIdx = (codeIdx + shift) mod len
+            //    → shift = (existingIdx - codeIdx) mod len
+            const shift =
+              ((((existingIdx - codeIdx) % len) + len) % len + len) % len;
+            newNames = new Array(len);
+            newPhones = new Array(len);
+            const oldPhones = myData.phones || [];
+            for (let i = 0; i < len; i++) {
+              const src = ((i + shift) % len + len) % len;
+              newNames[i] = myData.names[src];
+              newPhones[i] = oldPhones[src] || "";
+            }
+            console.log(
+              `[Wizard] rotate 적용: existingIdx=${existingIdx}, codeIdx=${codeIdx}, shift=${shift}`
+            );
+          } else {
+            // B) 새 이름 — codeIdx 자리만 덮어쓰기
+            newNames = [...myData.names];
+            newPhones = [...(myData.phones || [])];
+            while (newPhones.length < newNames.length) newPhones.push("");
+            newNames[codeIdx] = myName;
+            newPhones[codeIdx] = "";
+            console.log(
+              `[Wizard] 새 이름 주입: codeIdx=${codeIdx}, myName=${myName}`
+            );
+          }
+
+          // baseName/baseCode 도 현재 baseCode 기준으로 재계산
           const baseCodeIdx = myData.baseCode
             ? myData.gyobun.findIndex(
-                (c) =>
-                  String(c || "")
-                    .trim()
-                    .toLowerCase() ===
-                  String(myData.baseCode || "")
-                    .trim()
-                    .toLowerCase()
+                (c) => normLow(c) === normLow(myData.baseCode)
               )
             : -1;
           const newBaseName =
-            baseCodeIdx >= 0 && baseCodeIdx < newNames.length
+            baseCodeIdx >= 0 && baseCodeIdx < len
               ? newNames[baseCodeIdx]
               : myData.baseName;
 
@@ -315,8 +349,6 @@ export default function SetupWizard({
             phones: newPhones,
             baseName: newBaseName,
           };
-          // norm 은 lint용 참조 흔적 — 실제로는 위에서 쓰지 않음
-          void norm;
         }
       }
 
