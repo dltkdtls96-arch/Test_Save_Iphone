@@ -408,10 +408,10 @@ const loadAcc = () => {
   try {
     const raw = localStorage.getItem(ACC_KEY);
     return raw
-      ? { card1: true, card2: false, ...JSON.parse(raw) }
-      : { card1: true, card2: false };
+      ? { card1: true, card2: true, ...JSON.parse(raw) }
+      : { card1: true, card2: true };
   } catch {
-    return { card1: true, card2: false };
+    return { card1: true, card2: true };
   }
 };
 
@@ -422,9 +422,17 @@ const saveAcc = (acc) => {
 };
 
 /* ========= 공통 UI 값 ========= */
-const COMPACT_MINUTES = [0, 5, 10, 15, 20, 30, 40, 60, 70, 90, 120, 150, 180];
+// 0~10분 → 1분 단위, 10분 초과 → 5분 단위
+const COMPACT_MINUTES = [
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65,
+  70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150,
+  155, 160, 165, 170, 175, 180,
+];
+// 야간 시작/끝도 동일 정밀도
 const NIGHT_MINUTES = [
-  5, 10, 15, 20, 30, 40, 50, 60, 75, 90, 105, 120, 150, 180,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70,
+  75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150,
+  155, 160, 165, 170, 175, 180,
 ];
 const NIGHT_STEPS = [1, 2, 3, 5, 10, 15];
 
@@ -638,6 +646,14 @@ export default function WakeMidPanel({
     if (!arr.length) return;
     sendToShortcuts(arr, baseDate);
   };
+
+  // 야간 알람 생성 개수 (버튼 라벨용)
+  const nightCount = React.useMemo(() => {
+    const start = Math.max(cfg.nightStartMin, cfg.nightEndMin);
+    const end = Math.min(cfg.nightStartMin, cfg.nightEndMin);
+    const step = Math.max(1, cfg.nightStepMin);
+    return Math.floor((start - end) / step) + 1;
+  }, [cfg.nightStartMin, cfg.nightEndMin, cfg.nightStepMin]);
 
   return (
     <div className="mt-2 space-y-3 text-sm text-gray-100">
@@ -854,43 +870,74 @@ export default function WakeMidPanel({
               disabled={disabled}
               title="중간 시각 기준으로 야간 범위 알람 여러 개 생성"
             >
-              야간 범위 알람 만들기
+              야간 범위 알람 만들기 ({nightCount}개)
             </button>
           </div>
         </div>
       </AccordionSection>
 
-      {/* 예정 알람 시간 미리보기 */}
-      {/* 예정 알람 시간 미리보기 */}
+      {/* 예정 알람 시간 미리보기 (시간순 정렬) */}
       {baseDate && (
-        <div className="rounded-xl bg-gray-900/60 p-3 text-[11px] text-gray-200 space-y-1">
-          <div>예정 알람 시간</div>
-
-          <div>
-            차받기 {fmtHMfromDate(subMinutes(baseDate, cfg.preCarReceiveMin))}
-          </div>
-          <div>
-            출무 {fmtHMfromDate(subMinutes(baseDate, cfg.preMidWorkMin))}
-          </div>
-          <div>
-            출고 {fmtHMfromDate(subMinutes(baseDate, cfg.preMidOutMin))}
+        <div className="rounded-xl bg-gray-900/60 p-3 text-[11px] text-gray-200">
+          <div className="mb-2 text-gray-300">
+            예정 알람 시간 (기준 <b>{baseHM}</b>)
           </div>
 
-          <div>
-            야간 범위{" "}
-            {(() => {
-              const start = Math.max(cfg.nightStartMin, cfg.nightEndMin);
-              const end = Math.min(cfg.nightStartMin, cfg.nightEndMin);
-              const step = Math.max(1, cfg.nightStepMin);
+          {(() => {
+            const items = [];
 
-              const arr = [];
-              for (let m = start; m >= end; m -= step) {
-                const t = subMinutes(baseDate, m);
-                arr.push(fmtHMfromDate(t));
-              }
-              return arr.length ? arr.join(", ") : "-";
-            })()}
-          </div>
+            // 단일 알람들
+            items.push({
+              time: subMinutes(baseDate, cfg.preCarReceiveMin),
+              kind: "차받기",
+              offset: cfg.preCarReceiveMin,
+              color: "text-cyan-300",
+            });
+            items.push({
+              time: subMinutes(baseDate, cfg.preMidWorkMin),
+              kind: "출무",
+              offset: cfg.preMidWorkMin,
+              color: "text-indigo-300",
+            });
+            items.push({
+              time: subMinutes(baseDate, cfg.preMidOutMin),
+              kind: "출고",
+              offset: cfg.preMidOutMin,
+              color: "text-rose-300",
+            });
+
+            // 야간 알람들
+            const start = Math.max(cfg.nightStartMin, cfg.nightEndMin);
+            const end = Math.min(cfg.nightStartMin, cfg.nightEndMin);
+            const step = Math.max(1, cfg.nightStepMin);
+            for (let m = start; m >= end; m -= step) {
+              items.push({
+                time: subMinutes(baseDate, m),
+                kind: "야간",
+                offset: m,
+                color: "text-orange-300",
+              });
+            }
+
+            // 시간순 정렬 (오름차순)
+            items.sort((a, b) => a.time.getTime() - b.time.getTime());
+
+            return (
+              <ul className="space-y-0.5">
+                {items.map((it, i) => (
+                  <li key={i} className="flex items-center gap-2">
+                    <span className="font-mono text-gray-100 w-12">
+                      {fmtHMfromDate(it.time)}
+                    </span>
+                    <span className={it.color}>{it.kind}</span>
+                    <span className="text-gray-500">
+                      ({it.offset}분 전)
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            );
+          })()}
         </div>
       )}
     </div>
