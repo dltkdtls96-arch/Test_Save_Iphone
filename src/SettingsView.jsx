@@ -17,6 +17,103 @@ import {
   diagnoseStorage,
 } from "./dataEngine";
 
+// 안심 기지 전화번호 매핑 (이름 → 전화번호)
+// 출처: 안심_전번.xlsx
+// 자동 매칭 버튼으로 한 번에 채울 수 있음
+const ANSIM_PHONE_MAP = {
+  "이정식": "010-5027-1525",
+  "박종태": "010-5122-7225",
+  "임정재": "010-2443-3730",
+  "임민우": "010-2598-2958",
+  "류기철": "010-8865-3062",
+  "남태문": "010-4475-5118",
+  "전경구": "010-8573-6318",
+  "손홍석": "010-5611-2231",
+  "김관동": "010-5354-4501",
+  "김희준": "010-3803-2786",
+  "이원진": "010-3511-5184",
+  "김우년": "010-3824-2384",
+  "김병재": "010-2519-0526",
+  "김성규": "010-6255-3981",
+  "이근수": "010-3545-7880",
+  "박정식": "010-4533-6094",
+  "강유덕": "010-8892-8087",
+  "조덕헌": "010-8608-0538",
+  "구민혁": "010-2858-4343",
+  "정운규": "010-7482-1005",
+  "채준호": "010-2572-2496",
+  "임병길": "010-3549-6802",
+  "강원희": "010-4478-1268",
+  "송기중": "010-2577-6526",
+  "왕진섭": "010-7107-0143",
+  "김호열": "010-2539-8512",
+  "허준석": "010-2805-0211",
+  "이상훈": "010-4166-9608",
+  "정범철": "010-5112-2184",
+  "김재곤": "010-2878-5214",
+  "우진하": "010-3305-5302",
+  "이상헌": "010-3820-2081",
+  "박경섭": "010-7220-4439",
+  "이재문": "010-9944-5004",
+  "윤영준": "010-8363-7575",
+  "문경주": "010-9411-2105",
+  "김현우": "010-2817-1074",
+  "김병국": "010-3235-1768",
+  "박상현": "010-2533-9930",
+  "권정진": "010-3521-3178",
+  "신동훈": "010-4333-9188",
+  "이상원": "010-9985-4895",
+  "최병환": "010-3446-2081",
+  "이기환": "010-4813-1425",
+  "정호창": "010-4243-3923",
+  "김성열": "010-2504-3139",
+  "이성철": "010-3205-6437",
+  "임대기": "010-8703-0369",
+  "이재헌": "010-2338-9797",
+  "김치완": "010-8857-0055",
+  "강병웅": "010-2510-0292",
+  "오중구": "010-9390-0407",
+  "권기석": "010-4339-7959",
+  "김종훈": "010-2250-2670",
+  "권용록": "010-6825-3021",
+  "함일남": "010-2527-8827",
+  "김상수": "010-8346-5215",
+  "이희한": "010-8851-8887",
+  "한남권": "010-6597-5611",
+  "박종률": "010-6509-0157",
+  "조재훈": "010-4436-1192",
+  "김건희": "010-4578-5689",
+  "박재민": "010-7751-2711",
+  "홍성민": "010-9967-2569",
+  "유용우": "010-4932-2124",
+  "김경구": "010-8000-2461",
+  "강동우": "010-2329-5336",
+  "박문우": "010-9325-8016",
+  "우진우": "010-6365-4296",
+  "박형민": "010-8511-6297",
+  "이상욱": "010-8851-3021",
+  "김찬우": "010-6767-2073",
+  "최우용": "010-5669-3554",
+  "박도현": "010-2925-4780",
+  "최동현": "010-2551-7399",
+  "이성재": "010-3433-1298",
+  "황병두": "010-3036-8003",
+  "엄인철": "010-4170-3103",
+  "이동혁": "010-5737-6690",
+  "김선정": "010-3121-8762",
+  "김성탁": "010-3867-5423",
+  "이상신": "010-3347-3953",
+  "김종규": "010-5152-4322",
+  "진위동": "010-9278-3582",
+  "권혁기": "010-3555-7277",
+  "강근영": "010-4840-8496",
+  "이원준": "010-6397-1886",
+  "백상우": "010-2924-9202",
+  "강인구": "010-5950-5001",
+  "이동호": "010-2007-0858",
+  "이창민": "010-8844-6414",
+};
+
 export default function SettingsView(props) {
   const {
     selectedDepot,
@@ -179,6 +276,70 @@ export default function SettingsView(props) {
     setEditingIdx(-1);
     setEditField(null);
     setEditValue("");
+  };
+
+  // ─────────────────────────────────────────
+  //  안심 전화번호 자동 매칭
+  //  ANSIM_PHONE_MAP에서 이름 일치하는 사람들 전화번호 일괄 채워넣기
+  //  - 안심(as) 기지에서만 동작
+  //  - 기존 전화번호가 있으면 덮어쓸지 옵션
+  // ─────────────────────────────────────────
+  const [autoFillMsg, setAutoFillMsg] = React.useState("");
+
+  const autoFillAnsimPhones = async (overwrite = false) => {
+    if (selectedDepot !== "안심") {
+      setAutoFillMsg("⚠️ 안심 기지에서만 사용 가능합니다.");
+      return;
+    }
+    const key = DEPOT_TO_ZIP_KEY[selectedDepot] || selectedDepot;
+    const common = commonMap?.[key];
+    if (!common?.names?.length) {
+      setAutoFillMsg("⚠️ 안심 데이터가 없습니다.");
+      return;
+    }
+
+    const names = common.names;
+    const oldPhones = Array.isArray(common.phones)
+      ? [...common.phones]
+      : new Array(names.length).fill("");
+    while (oldPhones.length < names.length) oldPhones.push("");
+
+    const newPhones = [...oldPhones];
+    let matched = 0;
+    let skipped = 0;
+    let unmatched = [];
+
+    names.forEach((name, i) => {
+      const phoneFromMap = ANSIM_PHONE_MAP[String(name || "").trim()];
+      if (phoneFromMap) {
+        if (newPhones[i] && !overwrite) {
+          skipped++;
+        } else {
+          newPhones[i] = phoneFromMap;
+          matched++;
+        }
+      } else if (name) {
+        unmatched.push(name);
+      }
+    });
+
+    const nextMap = {
+      ...commonMap,
+      [key]: { ...common, phones: newPhones },
+    };
+    setCommonMap?.(nextMap);
+    try {
+      await saveCommonDataToDB(nextMap);
+    } catch {}
+
+    let msg = `✅ ${matched}명 전화번호 자동 등록 완료`;
+    if (skipped > 0) msg += ` · 기존 유지 ${skipped}명`;
+    if (unmatched.length > 0) {
+      msg += ` · 명단에 없는 사람 ${unmatched.length}명 (수동 입력 필요)`;
+    }
+    setAutoFillMsg(msg);
+    // 5초 후 자동 사라짐
+    setTimeout(() => setAutoFillMsg(""), 8000);
   };
 
   // ─────────────────────────────────────────
@@ -634,6 +795,46 @@ export default function SettingsView(props) {
                 )}
               </p>
 
+              {/* 안심 전화번호 자동 매칭 (안심 기지에서만 표시) */}
+              {selectedDepot === "안심" && (
+                <div className="mb-3 p-2.5 rounded-lg bg-emerald-900/30 border border-emerald-500/30">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="text-[11px] text-emerald-200">
+                      📞 안심 전화번호 일괄 등록
+                      <span className="text-[10px] text-emerald-300/70 ml-1">
+                        (내장 명단 91명)
+                      </span>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => autoFillAnsimPhones(false)}
+                        className="px-2.5 py-1 rounded text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-500 text-white"
+                        title="비어있는 사람만 채우기"
+                      >
+                        빈 칸만 채우기
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => autoFillAnsimPhones(true)}
+                        className="px-2.5 py-1 rounded text-[11px] font-semibold bg-amber-600 hover:bg-amber-500 text-white"
+                        title="기존 번호도 모두 덮어쓰기"
+                      >
+                        전체 덮어쓰기
+                      </button>
+                    </div>
+                  </div>
+                  {autoFillMsg && (
+                    <div className="mt-2 text-[11px] text-emerald-100 leading-relaxed">
+                      {autoFillMsg}
+                    </div>
+                  )}
+                  <div className="mt-1 text-[10px] text-emerald-400/70 leading-relaxed">
+                    명단에 없는 사람은 수정 모드에서 직접 입력하세요.
+                  </div>
+                </div>
+              )}
+
               {(peopleRows?.length || 0) > 0 && (
                 <div className="grid grid-cols-[28px_44px_1fr_120px] gap-2 px-1.5 pb-1 text-[10px] text-gray-500 border-b border-gray-700/50">
                   <span className="text-right">#</span>
@@ -893,37 +1094,6 @@ export default function SettingsView(props) {
 
           {/* 오른쪽 컬럼 */}
           <div className="space-y-3">
-            {/* 테마 */}
-            <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
-              <div className="font-semibold mb-2">화면 테마</div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setTheme("light")}
-                  className={
-                    "flex-1 px-3 py-2 rounded-xl text-xs font-medium border transition-colors " +
-                    (theme === "light"
-                      ? "bg-indigo-500/10 border-indigo-500 text-indigo-600"
-                      : "bg-gray-800 border-gray-700 text-gray-300")
-                  }
-                >
-                  라이트
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTheme("dark")}
-                  className={
-                    "flex-1 px-3 py-2 rounded-xl text-xs font-medium border transition-colors " +
-                    (theme === "dark"
-                      ? "bg-indigo-500/10 border-indigo-500 text-indigo-600"
-                      : "bg-gray-800 border-gray-700 text-gray-300")
-                  }
-                >
-                  다크
-                </button>
-              </div>
-            </div>
-
             {/* 행로표 이미지 배율 */}
             <div className="p-3 rounded-2xl bg-gray-900/60 text-sm">
               <div className="font-semibold mb-2">
