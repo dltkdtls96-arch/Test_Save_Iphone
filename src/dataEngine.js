@@ -655,6 +655,34 @@ export function getPathImage(common, code, dateStr, holidaySet = new Set()) {
 //  중간알람
 // ─────────────────────────────────────────────
 
+// ─────────────────────────────────────────────
+//  getMidAlarmFromZip — 중간 알람 시각 계산
+//
+//  [검증된 규칙 — 안심 zip의 MID_TABLES 177/179 일치]
+//
+//  routeCode 별 로직:
+//    • "Nd" (주간 dia, 보통 1~24):
+//        → alarm/{오늘요일}/{오늘요일}_{N}d.txt
+//        → 파일의 "마지막 CD 또는 ET" 시각
+//        (쉬는 시간 끝나고 다시 차 타는 시간 = 승무교대 CD)
+//        주간 dia는 내일 요일과 무관 — 오늘 안에 근무 끝남
+//
+//    • "Nd" (야간 dia, 보통 25~37):
+//        → alarm/{내일요일}/{내일요일}_{N}~.txt
+//        → 파일의 "첫 줄" 시각
+//        (야간 출근 후 내일 새벽에 다시 타는 시간)
+//
+//    • "N~" (어제 야간 나온 사람의 오늘 복귀):
+//        → alarm/{오늘요일}/{오늘요일}_{N}~.txt
+//        → 파일의 "첫 줄" 시각
+//        (오늘이 바로 그 "복귀일")
+//
+//    • 그 외 ("대N", "휴N", "비번" 등): null
+//
+//  야간 판정: normalizeCode 결과가 "N~" 형태이거나,
+//            "Nd" 형태 + N >= NIGHT_START_BY_DEPOT[depot]
+// ─────────────────────────────────────────────
+
 export function getMidAlarmFromZip(
   common,
   code,
@@ -662,35 +690,46 @@ export function getMidAlarmFromZip(
   holidaySet = new Set()
 ) {
   if (!common?.alarms || !code) return null;
-  const dayType = _getDayType(dateStr, holidaySet);
-  const s = normalizeCode(code);
-  const isTilde = s.includes("~");
 
-  if (isTilde) {
-    const entries = common.alarms[dayType]?.[s] || [];
-    if (entries.length) return { hm: entries[0].hm, source: "tildeFirst" };
-    return null;
+  const s = normalizeCode(code); // "1d", "25d", "25~", "대2", "휴3" ...
+  const todayType = _getDayType(dateStr, holidaySet);
+
+  // 1) "N~" — 어제 야간에서 이어진 비번 자리 → 오늘 새벽 복귀 (오늘 요일 파일)
+  if (s.endsWith("~")) {
+    const entries = common.alarms[todayType]?.[s] || [];
+    if (!entries.length) return null;
+    return { hm: entries[0].hm, source: `${todayType}/${s}.first` };
   }
 
-  const entries = common.alarms[dayType]?.[s] || [];
-  if (!entries.length) {
-    const num = parseInt(s, 10);
-    const nightStart = NIGHT_START_BY_DEPOT[common.depot] ?? 25;
-    if (Number.isFinite(num) && num >= nightStart) {
-      const tildeKey = `${num}~`;
-      const next = _nextDateStr(dateStr);
-      const nextType = _getDayType(next, holidaySet);
-      const nextEntries = common.alarms[nextType]?.[tildeKey] || [];
-      if (nextEntries.length)
-        return { hm: nextEntries[0].hm, source: "nextDayFirst" };
-    }
-    return null;
+  // 2) "Nd" — 숫자+d 패턴만 처리. "대N","휴N" 등은 null.
+  const match = s.match(/^(\d{1,2})d$/);
+  if (!match) return null;
+  const num = parseInt(match[1], 10);
+  const nightStart = NIGHT_START_BY_DEPOT[common.depot] ?? 25;
+  const isNight = num >= nightStart;
+
+  if (isNight) {
+    // 야간: 내일 요일 + N~.txt 첫 줄
+    const nextDate = _nextDateStr(dateStr);
+    const nextType = _getDayType(nextDate, holidaySet);
+    const tildeKey = `${num}~`;
+    const entries = common.alarms[nextType]?.[tildeKey] || [];
+    if (!entries.length) return null;
+    return { hm: entries[0].hm, source: `${nextType}/${tildeKey}.first` };
   }
 
-  const cds = entries.filter((e) => e.tag === "CD");
-  if (cds.length >= 2) return { hm: cds[1].hm, source: "2ndCD" };
-  if (cds.length === 1) return { hm: cds[0].hm, source: "1stCD" };
-  return { hm: entries[0].hm, source: "firstEvent" };
+  // 주간: 오늘 요일 + Nd.txt 마지막 CD 또는 ET
+  const entries = common.alarms[todayType]?.[s] || [];
+  if (!entries.length) return null;
+
+  // 마지막 CD 우선, 없으면 마지막 ET
+  const cdEt = entries.filter((e) => e.tag === "CD" || e.tag === "ET");
+  if (cdEt.length === 0) return null;
+
+  // 첫 CD/ET는 "출근 승무"(LW와 같은 시각) — 제외하고 싶은데
+  // 마지막을 고르면 자동으로 처리됨.
+  const last = cdEt[cdEt.length - 1];
+  return { hm: last.hm, source: `${todayType}/${s}.last_${last.tag}` };
 }
 
 function _nextDateStr(dateStr) {
