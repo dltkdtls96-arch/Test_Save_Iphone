@@ -48,6 +48,12 @@ const DEPOT_TO_KEY = {
 };
 const ALL_DEPOTS = ["안심", "월배", "경산", "문양"];
 
+// ⭐ 통합 교번 데이터 ZIP 다운로드 URL
+// (4개 소속 통합본 — 안심/월배/경산/문양)
+// TODO: 데이터가 업데이트되면 이 URL만 바꾸면 됨
+const DATA_DOWNLOAD_URL =
+  "https://github.com/dltkdtls96-arch/Test_Save_Iphone/releases/latest/download/GB_data_2호선AI다이아.zip";
+
 // 오늘 날짜 (로컬)
 function todayStr() {
   const d = new Date();
@@ -71,6 +77,7 @@ export default function SetupWizard({
 }) {
   const [step, setStep] = useState(1);
   const [mode, setMode] = useState(null); // "tsv" | "zip"
+  const [showDataHelp, setShowDataHelp] = useState(false); // "교번 데이터 없으세요?" 토글
 
   // ZIP 관련
   const [zipLoading, setZipLoading] = useState(false);
@@ -330,6 +337,58 @@ export default function SetupWizard({
                 행로표 이미지는 ZIP으로 별도 등록 가능.
               </div>
             </button>
+
+            {/* ── 교번 데이터 없는 사용자를 위한 안내 ── */}
+            <div className="mt-5 pt-4 border-t border-gray-700">
+              <button
+                type="button"
+                className="w-full p-3 rounded-xl bg-emerald-700/40 hover:bg-emerald-700/60 border border-emerald-500/40 text-left transition"
+                onClick={() => setShowDataHelp((v) => !v)}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">💡</span>
+                    <span className="text-sm font-semibold text-emerald-100">
+                      교번 데이터 없으세요?
+                    </span>
+                  </div>
+                  <span className="text-xs text-emerald-300">
+                    {showDataHelp ? "▲" : "▼"}
+                  </span>
+                </div>
+              </button>
+
+              {showDataHelp && (
+                <div className="mt-2 p-3 rounded-xl bg-gray-900/60 border border-gray-700 text-xs leading-relaxed">
+                  <p className="text-gray-200 mb-2">
+                    소속의 교번 ZIP 파일이 없으신가요?
+                  </p>
+                  <p className="text-gray-400 mb-3">
+                    아래 링크에서 통합 데이터 파일을 받을 수 있습니다.
+                    <br />
+                    파일을 다운받은 후 위의{" "}
+                    <span className="text-indigo-300 font-medium">
+                      📦 ZIP 파일 방식
+                    </span>{" "}
+                    을 눌러 등록하세요.
+                  </p>
+                  <a
+                    href={DATA_DOWNLOAD_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition"
+                  >
+                    <span>📥</span>
+                    <span>교번 데이터 다운받기</span>
+                    <span className="opacity-70">↗</span>
+                  </a>
+                  <p className="mt-3 text-[11px] text-gray-500">
+                    * 안심 / 월배 / 경산 / 문양 4개 소속 데이터가 포함된
+                    통합본입니다.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
