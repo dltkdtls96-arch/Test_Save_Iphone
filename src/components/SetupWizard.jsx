@@ -52,7 +52,7 @@ const ALL_DEPOTS = ["안심", "월배", "경산", "문양"];
 // (4개 소속 통합본 — 안심/월배/경산/문양)
 // TODO: 데이터가 업데이트되면 이 URL만 바꾸면 됨
 const DATA_DOWNLOAD_URL =
-  "https://github.com/dltkdtls96-arch/Test_Save_Iphone/releases/latest/download/GB_data_2호선AI다이아.zip";
+  "https://github.com/dltkdtls96-arch/Test_Save_Iphone/releases/download/v1.0-data/2026.04.23.zip";
 
 // 오늘 날짜 (로컬)
 function todayStr() {
