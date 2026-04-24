@@ -401,7 +401,7 @@ function _tsvTimeToWorktime(timeObj) {
   const i = String(timeObj?.in || "").trim();
   const o = String(timeObj?.out || "").trim();
   if (!i && !o) return "----";
-  if (/^s[1-6]$/i.test(i)) return `${i}-${i}`;  // ← 이 줄만 추가
+  if (/^s[1-6]$/i.test(i)) return `${i}-${i}`; // ← 이 줄만 추가
   if (!i) return `-${o}`;
   if (!o) return `${i}-`;
   return `${i}-${o}`;
@@ -780,6 +780,12 @@ function _splitWorktime(raw) {
   const s = String(raw || "").replace(/\s/g, "");
   if (!s || s === "----") return { start: "-", end: "-", raw: "----" };
   const [start, end] = s.split("-");
+
+  // S코드 보정: 출근이 s[1-6]이면 퇴근도 동일하게
+  if (/^s[1-6]$/i.test(start || "")) {
+    return { start, end: start, raw: `${start}-${start}` };
+  }
+
   return { start: start || "-", end: end || "-", raw: s };
 }
 
