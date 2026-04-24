@@ -75,7 +75,7 @@ html[data-theme="light"] {
 
   --card-strong: #ffffff; /* 메인 카드 (가장 밝음) */
   --card-soft-alt: #ffffff; /* 카드 안의 그룹 바탕 */
-  --cell-bg: #ebebee;
+  --cell-bg: #eeeef1;
   --cell-out-bg: #f6f8fb;/* 이전·다음달 셀 */
 
   --card-inner: rgba(118, 118, 128, 0.12);
