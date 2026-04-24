@@ -3216,24 +3216,24 @@ export default function App() {
                       )
                     )}
                   </select>
-                </div>
-                <div className="mt-1 flex items-center gap-2">
-                  <span className="text-xs text-gray-400">전화번호</span>
-                  {routeTargetPhone ? (
-                    <a
-                      href={`tel:${String(routeTargetPhone).replace(
-                        /[^0-9+]/g,
-                        ""
-                      )}`}
-                      className="text-xs px-2 py-1 rounded-xl bg-emerald-600 text-white"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {routeTargetPhone}
-                    </a>
-                  ) : (
-                    <span className="text-xs text-gray-500">번호없음</span>
-                  )}
+                  <div className="ml-auto mr-1 flex items-center gap-2">
+                    <span className="text-xs text-gray-400">전화번호</span>
+                    {routeTargetPhone ? (
+                      <a
+                        href={`tel:${String(routeTargetPhone).replace(
+                          /[^0-9+]/g,
+                          ""
+                        )}`}
+                        className="text-xs px-2 py-1 rounded-xl bg-emerald-600 text-white"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {routeTargetPhone}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-gray-500">번호없음</span>
+                    )}
+                  </div>
                 </div>
                 <div
                   className="p-3 rounded-xl bg-gray-900/60 text-sm mt-3"
