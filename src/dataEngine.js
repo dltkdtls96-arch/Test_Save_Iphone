@@ -401,6 +401,7 @@ function _tsvTimeToWorktime(timeObj) {
   const i = String(timeObj?.in || "").trim();
   const o = String(timeObj?.out || "").trim();
   if (!i && !o) return "----";
+  if (/^s[1-6]$/i.test(i)) return `${i}-${i}`;  // ← 이 줄만 추가
   if (!i) return `-${o}`;
   if (!o) return `${i}-`;
   return `${i}-${o}`;
@@ -426,6 +427,7 @@ export function rebaseDepotToToday(data, todayStr) {
   if (!data?.names?.length || !data?.gyobun?.length || !data?.baseDate) {
     return data;
   }
+  if (data.baseDate === todayStr) return data;
 
   const norm = (s) => String(s || "").replace(/\s+/g, "");
   const len = data.names.length;
@@ -451,12 +453,6 @@ export function rebaseDepotToToday(data, todayStr) {
     baseNameIdx >= 0 && baseCodeIdx >= 0
       ? baseNameIdx - baseCodeIdx - offset
       : -offset;
-
-  // shift가 0이면 (mod len 이 아닌 실제 0) 이미 오늘 기준으로 정렬됨 — 그대로 반환
-  // 단, baseDate !== todayStr 인데 shift가 우연히 0의 배수가 되는 것도 OK
-  if (shift % len === 0 && data.baseDate === todayStr) {
-    return data;
-  }
 
   const namesToday = new Array(len);
   const phonesToday = new Array(len);
@@ -699,28 +695,8 @@ export function getMidAlarmFromZip(
   const s = normalizeCode(code); // "1d", "25d", "25~", "대2", "휴3" ...
   const todayType = _getDayType(dateStr, holidaySet);
 
-  // 1) "N~" — 어제 야간 (Nd)을 입력한 사람의 비번 날.
-  //    이 사람의 야간 범위 알람은 "어제 야간 다이아의 중간 시각" 기준이어야 함.
-  //    → 어제 날짜 + Nd 코드로 재귀 호출하여 마지막 CD/ET (= 자정 전후 운행 종료/중간)을 가져옴.
+  // 1) "N~" — 어제 야간에서 이어진 비번 자리 → 오늘 새벽 복귀 (오늘 요일 파일)
   if (s.endsWith("~")) {
-    const num = parseInt(s.replace("~", ""), 10);
-    if (Number.isFinite(num)) {
-      const yesterday = _prevDateStr(dateStr);
-      const yesterdayCode = `${num}d`;
-      const yResult = getMidAlarmFromZip(
-        common,
-        yesterdayCode,
-        yesterday,
-        holidaySet
-      );
-      if (yResult?.hm) {
-        return {
-          hm: yResult.hm,
-          source: `prevday(${yesterday})/${yesterdayCode}→${yResult.source}`,
-        };
-      }
-    }
-    // 폴백: 기존 로직 (오늘 새벽 복귀)
     const entries = common.alarms[todayType]?.[s] || [];
     if (!entries.length) return null;
     return { hm: entries[0].hm, source: `${todayType}/${s}.first` };
@@ -760,12 +736,6 @@ export function getMidAlarmFromZip(
 function _nextDateStr(dateStr) {
   const d = parseLocalDate(dateStr);
   d.setDate(d.getDate() + 1);
-  return formatDate(d);
-}
-
-function _prevDateStr(dateStr) {
-  const d = parseLocalDate(dateStr);
-  d.setDate(d.getDate() - 1);
   return formatDate(d);
 }
 
