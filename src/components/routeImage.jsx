@@ -487,7 +487,7 @@ export function RouteImageView({
         <img
           src={displaySrc}
           alt={showBus ? "버스시간표" : `행로표-${code}`}
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none"
           draggable={false}
           style={{
             transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${scale})`,
