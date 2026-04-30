@@ -4,26 +4,12 @@
  * 앱 최초 진입 / 재설정 시 표시되는 초기설정 마법사
  *
  * 흐름:
- *   Step 1. 데이터 방식 선택  (TSV / ZIP)
+ *   Step 1. 데이터 방식 선택  (내장 / ZIP / TSV)
  *   Step 2a. [ZIP]  ZIP 파일 등록
  *   Step 2b. [TSV]  행로표 ZIP 등록 (이미지용)  ← 선택사항
  *   Step 3. 소속 선택
  *   Step 4. 오늘 내 교번 선택
  *   Step 5. 완료
- *
- * Props:
- *   onComplete(result)  설정 완료 콜백
- *     result = {
- *       mode        : "tsv" | "zip",
- *       depot       : string,
- *       myName      : string,      // ZIP 모드만
- *       myCode      : string,      // 오늘 교번코드
- *       anchorDate  : string,      // "YYYY-MM-DD"
- *       commonMap   : object,      // { as: CommonDepotData, ... }
- *     }
- *
- *   existingTsvData   기존 TSV 기반 데이터 (TSV 모드 재설정 시 미리 채워짐)
- *   defaultDepot      초기 소속값
  */
 
 import React, { useState, useRef } from "react";
@@ -48,11 +34,9 @@ const DEPOT_TO_KEY = {
 };
 const ALL_DEPOTS = ["안심", "월배", "경산", "문양"];
 
-// ⭐ 통합 교번 데이터 ZIP 다운로드 URL
-// (4개 소속 통합본 — 안심/월배/경산/문양)
-// TODO: 데이터가 업데이트되면 이 URL만 바꾸면 됨
-const DATA_DOWNLOAD_URL =
-  "https://github.com/dltkdtls96-arch/Test_Save_Iphone/releases/latest/download/GB_data_2호선AI다이아.zip";
+// ⭐ 내장 통합 교번 데이터 ZIP 경로 (public/data/ 안의 파일)
+// Vite 가 public/ 폴더를 루트로 서빙하므로 "/data/..." 로 바로 접근됨
+const DATA_DOWNLOAD_URL = "data/gb_data.zip";
 
 // 오늘 날짜 (로컬)
 function todayStr() {
@@ -84,6 +68,10 @@ export default function SetupWizard({
   const [commonMap, setCommonMap] = useState(null); // ZIP 파싱 결과
   const [zipFileName, setZipFileName] = useState("");
 
+  // 내장 데이터 자동 로드 관련
+  const [bundledLoading, setBundledLoading] = useState(false);
+  const [bundledError, setBundledError] = useState("");
+
   // 행로표 전용 ZIP (TSV 모드)
   const [pathZipLoading, setPathZipLoading] = useState(false);
   const [pathZipDone, setPathZipDone] = useState(false);
@@ -97,6 +85,39 @@ export default function SetupWizard({
 
   const zipInputRef = useRef(null);
   const pathZipInputRef = useRef(null);
+
+  // ─────────────────────────────────────────
+  //  내장 ZIP 자동 로드 (public/data/ 안의 파일)
+  // ─────────────────────────────────────────
+  async function handleLoadBundled() {
+    setBundledLoading(true);
+    setBundledError("");
+    setZipError("");
+    try {
+      const res = await fetch(DATA_DOWNLOAD_URL);
+      if (!res.ok) throw new Error(`파일을 불러올 수 없습니다 (${res.status})`);
+      const blob = await res.blob();
+      const fileName = "GB_data_2호선AI다이아.zip";
+      const file = new File([blob], fileName, { type: "application/zip" });
+
+      const map = await loadZipToCommonMap(file);
+      if (!Object.keys(map).length)
+        throw new Error("ZIP 안에 유효한 데이터가 없습니다.");
+
+      await saveZipBlobToDB(file, fileName);
+      await saveCommonDataToDB(map);
+
+      // ZIP 모드로 전환하고 Step 3 (소속 선택) 으로 이동
+      setMode("zip");
+      setCommonMap(map);
+      setZipFileName(fileName);
+      setStep(3);
+    } catch (err) {
+      setBundledError(err.message || "내장 데이터를 불러올 수 없습니다.");
+    } finally {
+      setBundledLoading(false);
+    }
+  }
 
   // ─────────────────────────────────────────
   //  Step 2a: ZIP 파일 등록
@@ -155,22 +176,16 @@ export default function SetupWizard({
   const depotKey = DEPOT_TO_KEY[depot] || depot;
   const depotData = activeCommonMap?.[depotKey];
 
-  // 해당 소속의 이름 목록
   const nameList = depotData?.names?.filter(Boolean) || [];
-
-  // 오늘 날짜 기준 교번 목록 (전체 gyobun 그대로 — 사람이 "오늘 내 교번이 뭐야?" 선택)
   const gyobunList = depotData?.gyobun || [];
 
-  // ZIP 모드: 이름 선택 시 오늘 교번 자동 계산 (기존 이름만)
   function handleNameSelect(name) {
     setMyName(name);
     if (mode === "zip" && depotData && nameList.includes(name)) {
-      // 기존 이름이면 info.txt 기준으로 오늘 교번 미리 계산해서 기본값 제안
       const today = todayStr();
       const code = getCodeForDate(depotData, name, today);
       setMyCode(code || "");
     } else {
-      // 새 이름이면 사용자가 직접 오늘 교번 선택해야 함
       setMyCode("");
     }
   }
@@ -186,9 +201,6 @@ export default function SetupWizard({
     let effectiveCommonMap = commonMap;
 
     if (mode === "zip" && commonMap) {
-      // 🔑 모든 기지를 각자 info.txt (baseDate/baseName/baseCode) 기준으로
-      //    "오늘 배치" 로 재정렬한다. 내 기지만 돌리고 말면 다른 기지 화면에서
-      //    이름↔교번이 어긋난다 (버그 재발 방지).
       const rebuilt = {};
       for (const [k, dv] of Object.entries(commonMap)) {
         if (!dv || typeof dv !== "object") {
@@ -198,8 +210,6 @@ export default function SetupWizard({
         rebuilt[k] = rebaseDepotToToday(dv, today);
       }
 
-      // 새 이름 주입: 선택한 기지의 myCode 자리에 myName (덮어쓰기)
-      // — 다른 기지에는 적용하지 않는다.
       const myData = rebuilt[key];
       if (
         myName &&
@@ -217,8 +227,6 @@ export default function SetupWizard({
           newNames[codeIdx] = myName;
           newPhones[codeIdx] = "";
 
-          // baseName 도 baseCodeIdx 자리 이름으로 다시 계산
-          // (myCode == baseCode 인 경우 baseName 이 myName 으로 바뀌어야 함)
           const norm = (s) => String(s || "").replace(/\s+/g, "");
           const baseCodeIdx = myData.baseCode
             ? myData.gyobun.findIndex(
@@ -242,14 +250,12 @@ export default function SetupWizard({
             phones: newPhones,
             baseName: newBaseName,
           };
-          // norm 은 lint용 참조 흔적 — 실제로는 위에서 쓰지 않음
           void norm;
         }
       }
 
       effectiveCommonMap = rebuilt;
 
-      // 로그: 선택한 기지 배치 확인
       const chk = rebuilt[key];
       if (chk?.gyobun && chk?.names) {
         console.log(
@@ -300,29 +306,48 @@ export default function SetupWizard({
               어떤 방식으로 교번 데이터를 사용할지 선택하세요.
             </p>
 
-            {/* ⭐ 교번 데이터 다운로드 안내 — 최상단 항상 표시 */}
+            {/* ⭐ 내장 데이터 원클릭 등록 — 최상단 항상 표시 */}
             <div className="mb-5 p-4 rounded-xl bg-emerald-600/20 border-2 border-emerald-400/60 shadow-lg shadow-emerald-900/30">
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-lg">💡</span>
+                <span className="text-lg">⚡</span>
                 <span className="text-sm font-bold text-emerald-100">
-                  교번 데이터 파일이 없으신가요?
+                  처음 사용하시나요?
                 </span>
               </div>
               <p className="text-xs text-gray-300 mb-3 leading-relaxed">
-                처음 사용하시거나 ZIP 파일이 없다면, 아래 버튼으로
-                <br />
-                통합 교번 데이터를 먼저 다운받으세요.
+                별도 파일 없이 앱에 내장된 통합 교번 데이터를
+                <br />한 번에 등록할 수 있습니다.
               </p>
-              <a
-                href={DATA_DOWNLOAD_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-2 w-full px-4 py-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-white text-sm font-bold transition shadow-md"
+
+              {bundledError && (
+                <div className="mb-3 p-2.5 rounded-lg bg-red-900/50 text-red-300 text-xs">
+                  ⚠️ {bundledError}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleLoadBundled}
+                disabled={bundledLoading}
+                className={`inline-flex items-center justify-center gap-2 w-full px-4 py-3 rounded-lg text-white text-sm font-bold transition shadow-md
+                  ${
+                    bundledLoading
+                      ? "bg-emerald-700 cursor-wait"
+                      : "bg-emerald-500 hover:bg-emerald-400"
+                  }`}
               >
-                <span>📥</span>
-                <span>교번 데이터 다운받기</span>
-                <span className="opacity-70">↗</span>
-              </a>
+                {bundledLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
+                    <span>불러오는 중...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>⚡</span>
+                    <span>내장 데이터로 바로 시작</span>
+                  </>
+                )}
+              </button>
               <p className="mt-2 text-[11px] text-gray-400 text-center">
                 * 안심 / 월배 / 경산 / 문양 4개 소속 통합본
               </p>
@@ -332,7 +357,7 @@ export default function SetupWizard({
             <div className="flex items-center gap-2 mb-4">
               <div className="flex-1 h-px bg-gray-700" />
               <span className="text-[11px] text-gray-500">
-                파일 준비됐다면 ↓
+                또는 직접 등록 ↓
               </span>
               <div className="flex-1 h-px bg-gray-700" />
             </div>
@@ -640,7 +665,6 @@ export default function SetupWizard({
               })}
             </div>
 
-            {/* 직접 날짜로도 확인 가능 */}
             <div className="text-[11px] text-gray-500 mb-4">
               💡 헷갈리면 오늘 근무표에서 교번 번호를 확인하세요.
             </div>
