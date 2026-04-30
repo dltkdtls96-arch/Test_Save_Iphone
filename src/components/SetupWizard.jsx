@@ -34,9 +34,9 @@ const DEPOT_TO_KEY = {
 };
 const ALL_DEPOTS = ["안심", "월배", "경산", "문양"];
 
-// ⭐ 내장 통합 교번 데이터 ZIP 경로 (public/data/ 안의 파일)
-// Vite 가 public/ 폴더를 루트로 서빙하므로 "/data/..." 로 바로 접근됨
-const DATA_DOWNLOAD_URL = "data/gb_data.zip";
+// ⭐ 내장 통합 교번 데이터 ZIP 경로 (public/data/gb_data.zip)
+// Vite 가 public/ 폴더를 루트로 서빙하므로 "/data/gb_data.zip" 으로 접근됨
+const DATA_DOWNLOAD_URL = "/data/gb_data.zip";
 
 // 오늘 날짜 (로컬)
 function todayStr() {
@@ -45,6 +45,13 @@ function todayStr() {
     2,
     "0"
   )}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// 바이트 → KB/MB 변환
+function formatBytes(bytes) {
+  if (!bytes) return "0 KB";
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 // 교번 코드 색상 클래스
@@ -71,6 +78,11 @@ export default function SetupWizard({
   // 내장 데이터 자동 로드 관련
   const [bundledLoading, setBundledLoading] = useState(false);
   const [bundledError, setBundledError] = useState("");
+  const [bundledProgress, setBundledProgress] = useState({
+    phase: "", // "downloading" | "parsing" | "saving" | "done"
+    loaded: 0,
+    total: 0,
+  });
 
   // 행로표 전용 ZIP (TSV 모드)
   const [pathZipLoading, setPathZipLoading] = useState(false);
@@ -87,25 +99,75 @@ export default function SetupWizard({
   const pathZipInputRef = useRef(null);
 
   // ─────────────────────────────────────────
-  //  내장 ZIP 자동 로드 (public/data/ 안의 파일)
+  //  내장 ZIP 자동 로드 (public/data/gb_data.zip)
+  //  진행률 표시: 다운로드 → 파싱 → 저장
   // ─────────────────────────────────────────
   async function handleLoadBundled() {
     setBundledLoading(true);
     setBundledError("");
     setZipError("");
+    setBundledProgress({ phase: "downloading", loaded: 0, total: 0 });
+
     try {
+      // ── 1) 스트리밍 다운로드 (진행률 추적) ──
       const res = await fetch(DATA_DOWNLOAD_URL);
-      if (!res.ok) throw new Error(`파일을 불러올 수 없습니다 (${res.status})`);
-      const blob = await res.blob();
-      const fileName = "GB_data_2호선AI다이아.zip";
+      if (!res.ok)
+        throw new Error(`파일을 불러올 수 없습니다 (${res.status})`);
+
+      const contentLength = Number(res.headers.get("Content-Length")) || 0;
+
+      let blob;
+      if (res.body && contentLength > 0) {
+        // ReadableStream 으로 chunk 단위 읽기 → 진행률 계산
+        const reader = res.body.getReader();
+        const chunks = [];
+        let received = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          setBundledProgress({
+            phase: "downloading",
+            loaded: received,
+            total: contentLength,
+          });
+        }
+        blob = new Blob(chunks, { type: "application/zip" });
+      } else {
+        // Content-Length 가 없으면 일반 .blob() — 무한 spinner
+        blob = await res.blob();
+        setBundledProgress({
+          phase: "downloading",
+          loaded: blob.size,
+          total: blob.size,
+        });
+      }
+
+      // ── 2) ZIP 파싱 ──
+      setBundledProgress({ phase: "parsing", loaded: 0, total: 0 });
+      const fileName = "gb_data.zip";
       const file = new File([blob], fileName, { type: "application/zip" });
 
-      const map = await loadZipToCommonMap(file);
+      // loadZipToCommonMap 이 progress 콜백을 받는다면 활용
+      const map = await loadZipToCommonMap(file, (p) => {
+        setBundledProgress({
+          phase: "parsing",
+          loaded: p?.loaded || 0,
+          total: p?.total || 0,
+        });
+      });
+
       if (!Object.keys(map).length)
         throw new Error("ZIP 안에 유효한 데이터가 없습니다.");
 
+      // ── 3) 저장 ──
+      setBundledProgress({ phase: "saving", loaded: 0, total: 0 });
       await saveZipBlobToDB(file, fileName);
       await saveCommonDataToDB(map);
+
+      setBundledProgress({ phase: "done", loaded: 100, total: 100 });
 
       // ZIP 모드로 전환하고 Step 3 (소속 선택) 으로 이동
       setMode("zip");
@@ -114,6 +176,7 @@ export default function SetupWizard({
       setStep(3);
     } catch (err) {
       setBundledError(err.message || "내장 데이터를 불러올 수 없습니다.");
+      setBundledProgress({ phase: "", loaded: 0, total: 0 });
     } finally {
       setBundledLoading(false);
     }
@@ -280,6 +343,15 @@ export default function SetupWizard({
     });
   }
 
+  // 진행률 퍼센트
+  const bundledPct =
+    bundledProgress.total > 0
+      ? Math.min(
+          100,
+          Math.round((bundledProgress.loaded / bundledProgress.total) * 100)
+        )
+      : 0;
+
   // ─────────────────────────────────────────
   //  렌더
   // ─────────────────────────────────────────
@@ -329,24 +401,58 @@ export default function SetupWizard({
                 type="button"
                 onClick={handleLoadBundled}
                 disabled={bundledLoading}
-                className={`inline-flex items-center justify-center gap-2 w-full px-4 py-3 rounded-lg text-white text-sm font-bold transition shadow-md
+                className={`relative overflow-hidden inline-flex items-center justify-center gap-2 w-full px-4 py-3 rounded-lg text-white text-sm font-bold transition shadow-md
                   ${
                     bundledLoading
                       ? "bg-emerald-700 cursor-wait"
                       : "bg-emerald-500 hover:bg-emerald-400"
                   }`}
               >
-                {bundledLoading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
-                    <span>불러오는 중...</span>
-                  </>
-                ) : (
-                  <>
-                    <span>⚡</span>
-                    <span>내장 데이터로 바로 시작</span>
-                  </>
+                {/* 진행률 바 (확정값) */}
+                {bundledLoading && bundledProgress.total > 0 && (
+                  <div
+                    className="absolute inset-y-0 left-0 bg-emerald-500/60 transition-all duration-200"
+                    style={{ width: `${bundledPct}%` }}
+                  />
                 )}
+
+                {/* 진행률 바 (불확정 — Content-Length 없을 때) */}
+                {bundledLoading &&
+                  bundledProgress.total === 0 &&
+                  bundledProgress.phase && (
+                    <div className="absolute inset-y-0 left-0 right-0 overflow-hidden">
+                      <div className="h-full w-1/3 bg-emerald-500/50 animate-pulse" />
+                    </div>
+                  )}
+
+                {/* 텍스트 (앞으로 보이도록 z-10) */}
+                <div className="relative z-10 flex items-center justify-center gap-2">
+                  {bundledLoading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/70 border-t-transparent rounded-full animate-spin" />
+                      <span>
+                        {bundledProgress.phase === "downloading" &&
+                          (bundledProgress.total > 0
+                            ? `다운로드 ${bundledPct}% (${formatBytes(
+                                bundledProgress.loaded
+                              )} / ${formatBytes(bundledProgress.total)})`
+                            : "다운로드 중...")}
+                        {bundledProgress.phase === "parsing" &&
+                          (bundledProgress.total > 0
+                            ? `파싱 중 ${bundledProgress.loaded}/${bundledProgress.total}`
+                            : "파싱 중...")}
+                        {bundledProgress.phase === "saving" && "저장 중..."}
+                        {bundledProgress.phase === "done" && "완료!"}
+                        {!bundledProgress.phase && "불러오는 중..."}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span>⚡</span>
+                      <span>내장 데이터로 바로 시작</span>
+                    </>
+                  )}
+                </div>
               </button>
               <p className="mt-2 text-[11px] text-gray-400 text-center">
                 * 안심 / 월배 / 경산 / 문양 4개 소속 통합본
