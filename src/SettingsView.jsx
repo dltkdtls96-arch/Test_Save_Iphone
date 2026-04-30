@@ -1,4 +1,4 @@
-// src/SettingsView.jsx  (v3)
+// src/SettingsView.jsx  (v4)
 import React from "react";
 import {
   Settings as SettingsIcon,
@@ -9,9 +9,7 @@ import {
 } from "lucide-react";
 import PasswordSettings from "./lock/PasswordSettings";
 import {
-  loadZipToCommonMap,
   saveCommonDataToDB,
-  saveZipBlobToDB,
   fetchKoreanHolidaysRange,
   DEPOT_TO_ZIP_KEY,
   diagnoseStorage,
@@ -121,7 +119,6 @@ export default function SettingsView(props) {
     myName,
     setMyNameForDepot,
     nameList,
-    // anchorDateStr / setAnchorDateStr — 기준일 UI 제거됨, 자동으로 오늘 사용
     holidaysText,
     setHolidaysText,
     newHolidayDate,
@@ -161,15 +158,6 @@ export default function SettingsView(props) {
     "#94a3b8",
   ];
 
-  const [zipLoading, setZipLoading] = React.useState(false);
-  const [zipProgress, setZipProgress] = React.useState({
-    loaded: 0,
-    total: 0,
-    phase: "",
-  });
-  const [zipError, setZipError] = React.useState("");
-  const [zipDoneMsg, setZipDoneMsg] = React.useState("");
-
   const [editModeOn, setEditModeOn] = React.useState(false);
   const [editingIdx, setEditingIdx] = React.useState(-1);
   const [editField, setEditField] = React.useState(null);
@@ -188,13 +176,6 @@ export default function SettingsView(props) {
       );
     }
     if (personSortMode === "dia") {
-      // DIA 정렬 우선순위:
-      //  1) 숫자 DIA (작은 숫자부터)
-      //  2) 대N (숫자 오름차순)
-      //  3) 주 / 야
-      //  4) 비번/비/N~ (비번류)
-      //  5) 휴 / 휴가 / 교육
-      //  6) 기타
       const rankOf = (dia) => {
         if (dia == null || dia === "") return [9999, 0, ""];
         if (typeof dia === "number") return [0, dia, ""];
@@ -220,7 +201,6 @@ export default function SettingsView(props) {
         );
       });
     }
-    // "seq" — 원래 순번 그대로
     return list;
   }, [peopleRows, personSortMode]);
 
@@ -239,33 +219,6 @@ export default function SettingsView(props) {
     return [...set].sort().join("\n");
   };
 
-  async function handleZipUploadInSettings(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setZipLoading(true);
-    setZipError("");
-    setZipDoneMsg("");
-    setZipProgress({ loaded: 0, total: 0, phase: "opening" });
-    try {
-      const map = await loadZipToCommonMap(file, (p) => setZipProgress(p));
-      if (!Object.keys(map).length)
-        throw new Error("ZIP에 유효한 데이터가 없습니다.");
-      await saveZipBlobToDB(file, file.name);
-      const merged = { ...(commonMap || {}), ...map };
-      await saveCommonDataToDB(merged);
-      setCommonMap?.(merged);
-      setZipDoneMsg(
-        `✅ ${file.name} 등록 완료 (소속 ${Object.keys(map).length}개)`
-      );
-    } catch (err) {
-      setZipError(err.message || "ZIP 파일 오류");
-    } finally {
-      setZipLoading(false);
-      setZipProgress({ loaded: 0, total: 0, phase: "" });
-      e.target.value = "";
-    }
-  }
-
   const beginEdit = (idx, field, currentValue) => {
     setEditingIdx(idx);
     setEditField(field);
@@ -280,9 +233,6 @@ export default function SettingsView(props) {
 
   // ─────────────────────────────────────────
   //  안심 전화번호 자동 매칭
-  //  ANSIM_PHONE_MAP에서 이름 일치하는 사람들 전화번호 일괄 채워넣기
-  //  - 안심(as) 기지에서만 동작
-  //  - 기존 전화번호가 있으면 덮어쓸지 옵션
   // ─────────────────────────────────────────
   const [autoFillMsg, setAutoFillMsg] = React.useState("");
 
@@ -338,15 +288,11 @@ export default function SettingsView(props) {
       msg += ` · 명단에 없는 사람 ${unmatched.length}명 (수동 입력 필요)`;
     }
     setAutoFillMsg(msg);
-    // 5초 후 자동 사라짐
     setTimeout(() => setAutoFillMsg(""), 8000);
   };
 
   // ─────────────────────────────────────────
   //  이름/전화번호 편집 커밋
-  //  이름 변경 시:
-  //   - 새 이름이 기존에 없음 → 단순 개명
-  //   - 새 이름이 기존에 있음 → 스왑할지 confirm 물어보기
   // ─────────────────────────────────────────
   const commitEdit = async () => {
     if (editingIdx < 0 || !editField) return;
@@ -375,7 +321,6 @@ export default function SettingsView(props) {
       const newKey = norm(newVal);
       const oldKey = norm(oldName);
 
-      // 같은 이름(공백/대소문자만 다름) → 표기만 정리
       if (newKey === oldKey) {
         const newNames = [...common.names];
         newNames[editingIdx] = newVal;
@@ -384,7 +329,6 @@ export default function SettingsView(props) {
         try {
           await saveCommonDataToDB(nextMap);
         } catch {}
-        // TSV 동기화
         try {
           const lines = (currentTableText || "").split(/\r?\n/);
           if (lines.length > editingIdx + 1) {
@@ -403,7 +347,6 @@ export default function SettingsView(props) {
         return;
       }
 
-      // 새 이름이 이미 다른 자리에 존재하는지 확인 (editingIdx 제외)
       const swapCandidates = common.names
         .map((n, i) => ({ n, i }))
         .filter((x) => norm(x.n) === newKey && x.i !== editingIdx);
@@ -417,7 +360,6 @@ export default function SettingsView(props) {
       }
 
       if (swapCandidates.length === 1) {
-        // 스왑 확인
         const swapIdx = swapCandidates[0].i;
         const swapName = common.names[swapIdx];
         const ok = window.confirm(
@@ -430,12 +372,10 @@ export default function SettingsView(props) {
           return;
         }
 
-        // 이름 swap
         const newNames = [...common.names];
         newNames[editingIdx] = swapName;
         newNames[swapIdx] = oldName;
 
-        // 전화번호도 함께 swap
         const oldPhones = common.phones || [];
         const newPhones = [...oldPhones];
         if (oldPhones.length === common.names.length) {
@@ -452,7 +392,6 @@ export default function SettingsView(props) {
           await saveCommonDataToDB(nextMap);
         } catch {}
 
-        // TSV 동기화
         try {
           const lines = (currentTableText || "").split(/\r?\n/);
           const aLine = editingIdx + 1;
@@ -478,7 +417,6 @@ export default function SettingsView(props) {
         return;
       }
 
-      // 새 이름 (기존에 없음) — 단순 개명
       const newNames = [...common.names];
       newNames[editingIdx] = newVal;
       const nextMap = { ...commonMap, [key]: { ...common, names: newNames } };
@@ -487,7 +425,6 @@ export default function SettingsView(props) {
         await saveCommonDataToDB(nextMap);
       } catch {}
 
-      // TSV 동기화
       try {
         const lines = (currentTableText || "").split(/\r?\n/);
         if (lines.length > editingIdx + 1) {
@@ -562,11 +499,6 @@ export default function SettingsView(props) {
     }
   };
 
-  const progressPct =
-    zipProgress.total > 0
-      ? Math.round((zipProgress.loaded / zipProgress.total) * 100)
-      : 0;
-
   return (
     <div
       className="bg-gray-800 shadow mt-4 overflow-y-auto"
@@ -595,7 +527,7 @@ export default function SettingsView(props) {
       </div>
 
       <div className="px-4 py-3 space-y-4">
-        {/* ─── 데이터 등록 ─── */}
+        {/* ─── 데이터 재설정 (마법사 단일 진입) ─── */}
         <section
           className="p-5 rounded-2xl"
           style={{ background: "var(--surface-2)" }}
@@ -608,104 +540,37 @@ export default function SettingsView(props) {
                 color: "var(--accent)",
               }}
             >
-              📦
+              🧙
             </div>
             <div className="flex-1 min-w-0">
               <div
                 className="text-[15px] font-semibold"
                 style={{ color: "var(--text-primary)" }}
               >
-                교번 데이터 등록
+                교번 데이터 재설정
               </div>
               <p
                 className="text-[12px] mt-0.5 leading-relaxed"
                 style={{ color: "var(--text-secondary)" }}
               >
-                ZIP 파일을 등록하면 근무표·행로표가 자동으로 반영됩니다.
+                설정 마법사를 다시 실행해 ZIP 파일 등록부터 소속·교번 선택까지
+                새로 진행합니다.
               </p>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="block w-full">
-              <div
-                className="w-full py-3 rounded-xl text-center cursor-pointer transition text-sm font-semibold flex items-center justify-center gap-2"
-                style={{
-                  background: zipLoading ? "var(--surface-3)" : "var(--accent)",
-                  color: zipLoading ? "var(--text-tertiary)" : "#ffffff",
-                  boxShadow: zipLoading
-                    ? "none"
-                    : "0 2px 8px rgba(49,130,246,0.22)",
-                }}
-              >
-                {zipLoading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs">
-                      {zipProgress.phase === "opening" && "ZIP 열기..."}
-                      {zipProgress.phase === "reading_texts" &&
-                        `텍스트 읽는 중 ${zipProgress.loaded}/${zipProgress.total}`}
-                      {zipProgress.phase === "parsing" && "파싱 중..."}
-                      {zipProgress.phase === "done" && "완료!"}
-                    </span>
-                  </>
-                ) : (
-                  <span>교번 ZIP 파일 등록</span>
-                )}
-              </div>
-              <input
-                type="file"
-                accept=".zip"
-                className="hidden"
-                onChange={handleZipUploadInSettings}
-                disabled={zipLoading}
-              />
-            </label>
-
-            <button
-              type="button"
-              onClick={() => onOpenSetupWizard?.()}
-              className="w-full py-2.5 rounded-xl text-[13px] font-medium transition"
-              style={{
-                background: "transparent",
-                color: "var(--text-secondary)",
-                boxShadow: "inset 0 0 0 1px var(--border-strong)",
-              }}
-            >
-              설정 마법사로 처음부터 시작
-            </button>
-          </div>
-
-          {zipProgress.total > 0 && zipLoading && (
-            <div
-              className="mt-3 h-1 bg-gray-700 rounded-full overflow-hidden"
-              style={{ background: "var(--surface-3)" }}
-            >
-              <div
-                className="h-full transition-all"
-                style={{
-                  width: `${progressPct}%`,
-                  background: "var(--accent)",
-                }}
-              />
-            </div>
-          )}
-          {zipError && (
-            <div
-              className="mt-3 p-2.5 rounded-lg text-[12px]"
-              style={{ background: "var(--red-soft)", color: "var(--red)" }}
-            >
-              {zipError}
-            </div>
-          )}
-          {zipDoneMsg && (
-            <div
-              className="mt-3 p-2.5 rounded-lg text-[12px]"
-              style={{ background: "var(--green-soft)", color: "var(--green)" }}
-            >
-              {zipDoneMsg}
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={() => onOpenSetupWizard?.()}
+            className="w-full py-3 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2"
+            style={{
+              background: "var(--accent)",
+              color: "#ffffff",
+              boxShadow: "0 2px 8px rgba(49,130,246,0.22)",
+            }}
+          >
+            🧙 설정 마법사 실행
+          </button>
         </section>
 
         {/* 2-컬럼 레이아웃 */}
@@ -795,7 +660,7 @@ export default function SettingsView(props) {
                 )}
               </p>
 
-              {/* 안심 전화번호 자동 매칭 (안심 기지에서만 표시) */}
+              {/* 안심 전화번호 자동 매칭 */}
               {selectedDepot === "안심" && (
                 <div className="mb-3 p-2.5 rounded-lg bg-emerald-900/30 border border-emerald-500/30">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -846,7 +711,7 @@ export default function SettingsView(props) {
 
               <div className="max-h-[360px] overflow-y-auto pr-1 space-y-0.5 mt-1">
                 {sortedPeople.map(({ row, origIdx }) => {
-                  const i = origIdx; // 편집/저장은 원본 인덱스 기준 유지
+                  const i = origIdx;
                   const editingName =
                     editModeOn && editingIdx === i && editField === "name";
                   const editingPhone =
@@ -1002,16 +867,11 @@ export default function SettingsView(props) {
                 })}
                 {(peopleRows?.length || 0) === 0 && (
                   <div className="text-xs text-gray-500 py-4 text-center">
-                    먼저 ZIP 또는 TSV를 등록하세요.
+                    먼저 설정 마법사를 실행해 데이터를 등록하세요.
                   </div>
                 )}
               </div>
             </div>
-
-            {/*
-              기준일 UI 제거됨 — 자동으로 오늘(현재일) 기준으로 동작.
-              App.jsx 가 매일 anchor 를 오늘로 갱신하므로 UI 에서 건드릴 필요 없음.
-            */}
 
             {/* 공휴일 관리 */}
             <div className="mt-5 p-4 rounded-2xl bg-gray-900/60 shadow-inner border border-gray-700/40 text-sm">
@@ -1285,7 +1145,6 @@ export default function SettingsView(props) {
             onClick={async () => {
               try {
                 const report = await diagnoseStorage();
-                // 결과 프롬프트/복사 — 화면에도 표시
                 const el = document.getElementById("storage-diag-output");
                 if (el) el.textContent = report;
                 try {
