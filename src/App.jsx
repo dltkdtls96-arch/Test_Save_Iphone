@@ -611,6 +611,11 @@ export default function App() {
   const [dragX, setDragX] = useState(0);
   const [isSnapping, setIsSnapping] = useState(false);
   const [selectedDepot, setSelectedDepot] = useState("안심");
+  // 사용자의 "기본 기지" — 홈/전체/설정 탭에서 항상 이 기지를 봄.
+  // 행로/그룹에서 임시로 다른 기지 데이터를 봐도 selectedDepot 만 잠깐 바뀌고,
+  // 다시 홈/전체로 돌아가면 이 값으로 복원됨.
+  const [homeDepot, setHomeDepot] = useState("안심");
+
   const [overridesByDepot, setOverridesByDepot] = useState({});
   const [dutyModal, setDutyModal] = useState({
     open: false,
@@ -1316,6 +1321,8 @@ export default function App() {
         if (s.tablesByDepot) setTablesByDepot(s.tablesByDepot);
         if (s.myNameMap) setMyNameMap(s.myNameMap);
         if (s.selectedDepot) setSelectedDepot(s.selectedDepot);
+        if (s.homeDepot) setHomeDepot(s.homeDepot);
+        else if (s.selectedDepot) setHomeDepot(s.selectedDepot);
         if (s.overridesByDepot) setOverridesByDepot(s.overridesByDepot);
         if (s.nameOverridesByDepot)
           setNameOverridesByDepot(s.nameOverridesByDepot);
@@ -1638,6 +1645,7 @@ export default function App() {
     setCommonMap(finalMap);
     saveCommonDataToDB(finalMap).catch(() => {});
     setSelectedDepot(depot);
+    setHomeDepot(depot);
     if (wizName) setMyNameForDepot(depot, wizName);
     // anchor = today (Wizard가 이미 오늘 배치로 넘겼으므로)
     setAnchorDateByDepot((prev) => ({ ...prev, [depot]: todayISO }));
@@ -1669,6 +1677,18 @@ export default function App() {
     if (selectedTab === "compare" && fmt(selectedDate) !== fmt(today))
       setSelectedDate(today);
   }, [selectedTab]);
+  // 홈/전체/설정 탭으로 들어올 때, 행로/그룹에서 임시로 바뀐 기지가 있으면
+  // 사용자의 기본 기지(homeDepot)로 복원.
+  useEffect(() => {
+    if (
+      (selectedTab === "home" ||
+        selectedTab === "roster" ||
+        selectedTab === "settings") &&
+      selectedDepot !== homeDepot
+    ) {
+      setSelectedDepot(homeDepot);
+    }
+  }, [selectedTab]);
   useEffect(() => {
     if (selectedTab === "route") {
       setRoutePage(0);
@@ -1695,6 +1715,7 @@ export default function App() {
       routeScaleByDepot,
       highlightMap,
       tablesByDepot,
+      homeDepot,
       selectedDate: fmt(selectedDate),
       compareSelected,
       overridesByDepot,
@@ -1713,6 +1734,7 @@ export default function App() {
     myNameMap,
     anchorDateByDepot,
     holidaysText,
+    homeDepot,
     nightDiaByDepot,
     routeScaleByDepot,
     highlightMap,
@@ -2499,7 +2521,11 @@ export default function App() {
                     <select
                       className="bg-gray-700 rounded-xl p-1 text-xs"
                       value={selectedDepot}
-                      onChange={(e) => setSelectedDepot(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSelectedDepot(v);
+                        setHomeDepot(v);
+                      }}
                     >
                       {DEPOTS.map((d) => (
                         <option key={d} value={d}>
@@ -2971,7 +2997,11 @@ export default function App() {
                 <select
                   className="bg-gray-700 rounded-xl px-2 py-1 text-sm"
                   value={selectedDepot}
-                  onChange={(e) => setSelectedDepot(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSelectedDepot(v);
+                    setHomeDepot(v);
+                  }}
                 >
                   {DEPOTS.map((d) => (
                     <option key={d} value={d}>
@@ -3311,7 +3341,11 @@ export default function App() {
                     <select
                       className="bg-gray-700 rounded-xl px-2 py-1 text-sm"
                       value={selectedDepot}
-                      onChange={(e) => setSelectedDepot(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setSelectedDepot(v);
+                        setHomeDepot(v);
+                      }}
                     >
                       {DEPOTS.map((d) => (
                         <option key={d} value={d}>
@@ -3563,12 +3597,12 @@ export default function App() {
             </div>
           </div>
         )}
-
         {/* 그룹(비교) 탭 */}
         {selectedTab === "compare" && (
           <CompareWeeklyBoard
             {...{
               selectedDepot,
+              setSelectedDepot,
               selectedDate,
               setSelectedDate,
               nameList,
@@ -3586,6 +3620,8 @@ export default function App() {
               overridesByDepot,
               labelTemplates,
               diaTemplates,
+              setRouteTargetName,
+              setSelectedTab,
             }}
           />
         )}
@@ -4110,6 +4146,7 @@ function FixedTabbarPortal({ children }) {
 //     인원이 많으면 내부 영역 자체가 스크롤 가능
 function CompareWeeklyBoard({
   selectedDepot,
+  setSelectedDepot,
   selectedDate,
   setSelectedDate,
   nameList,
@@ -4127,6 +4164,8 @@ function CompareWeeklyBoard({
   overridesByDepot,
   labelTemplates,
   diaTemplates,
+  setRouteTargetName,
+  setSelectedTab,
 }) {
   const isOverridden = React.useCallback(
     (name, depot, date) => {
@@ -4389,6 +4428,40 @@ function CompareWeeklyBoard({
   };
 
   // ─────────────────────────────────────────
+  //  탭 동작: 첫 탭은 선택 (파란 테두리), 같은 사람 또 탭하면 행로 이동
+  //   • 시간 제한 없음 — 다른 사람 탭하면 선택만 옮겨짐
+  //   • 같은 사람 두 번째 탭 → 행로 탭으로 이동
+  // ─────────────────────────────────────────
+  // 셀 단위 선택 — depot::name::iso 가 키
+  const [selectedCellKey, setSelectedCellKey] = React.useState(null);
+  const handleCellTap = (name, depot, dateObj) => {
+    const iso = fmt(stripTime(new Date(dateObj)));
+    const key = `${depot}::${name}::${iso}`;
+    if (selectedCellKey === key) {
+      // 같은 셀 두 번째 탭 — 그 셀의 날짜로 행로 이동
+      setSelectedCellKey(null);
+      try {
+        navigator.vibrate?.(10);
+      } catch {}
+      const targetDate = stripTime(new Date(dateObj));
+      // ⚠️ 순서 중요: 날짜·이름·기지를 flushSync 로 동기 반영한 후
+      //    탭 전환을 트리거해야 행로 탭이 그 날짜의 dia 를 표시함.
+      flushSync(() => {
+        if (depot !== selectedDepot) setSelectedDepot(depot);
+        setRouteTargetName(name);
+        setSelectedDate(targetDate);
+      });
+      if (window.triggerRouteTransition) {
+        window.triggerRouteTransition();
+      } else {
+        setSelectedTab("route");
+      }
+      return;
+    }
+    // 첫 탭 또는 다른 셀 탭 — 선택만 옮김
+    setSelectedCellKey(key);
+  };
+  // ─────────────────────────────────────────
   //  주(week) 계산 — 선택 날짜가 속한 주를 month-independent 로 추출
   //  좌/우 스와이프 시 selectedDate 를 ±7 일 이동. 이 때 달이 자동으로 바뀜.
   //  (monthGridMonday 는 헤더의 월 라벨 결정용으로만 사용, 데이터 그리드는
@@ -4433,14 +4506,38 @@ function CompareWeeklyBoard({
       return x.getTime();
     };
     if (weekStartTime(prev) !== weekStartTime(curr)) {
+      // 새 주의 7일 계산
+      const dow = (curr.getDay() + 6) % 7;
+      const monday = new Date(curr);
+      monday.setDate(curr.getDate() - dow);
+      const weekDays = [];
+      for (let i = 0; i < 7; i++) {
+        const x = new Date(monday);
+        x.setDate(monday.getDate() + i);
+        weekDays.push(x);
+      }
+      // 방향성 반영: forward(다음 주) → 가장 이른 달, backward(이전 주) → 가장 늦은 달
+      const goingForward = curr.getTime() > prev.getTime();
+      const target = goingForward
+        ? weekDays.reduce((a, b) =>
+            a.getFullYear() < b.getFullYear() ||
+            (a.getFullYear() === b.getFullYear() && a.getMonth() < b.getMonth())
+              ? a
+              : b
+          )
+        : weekDays.reduce((a, b) =>
+            a.getFullYear() > b.getFullYear() ||
+            (a.getFullYear() === b.getFullYear() && a.getMonth() > b.getMonth())
+              ? a
+              : b
+          );
       setViewMonth({
-        year: curr.getFullYear(),
-        month: curr.getMonth(),
+        year: target.getFullYear(),
+        month: target.getMonth(),
       });
     }
     prevSelectedRef.current = curr;
   }, [selectedDate]);
-
   // ─────────────────────────────────────────
   //  순서 변경 (long-press → 들어올림 → 드래그)
   //
@@ -4678,17 +4775,28 @@ function CompareWeeklyBoard({
     if (goNext) {
       setDragX(-width);
       setTimeout(() => {
-        // 현재 주에 viewMonth+1 달의 날짜가 섞여있으면 → 같은 주 유지, 라벨만 다음 달
+        // 현재 주가 spanning week 인지 확인 (viewMonth 와 viewMonth+1 둘 다 포함)
         const nextM = (viewMonth.month + 1) % 12;
         const nextY =
           viewMonth.month === 11 ? viewMonth.year + 1 : viewMonth.year;
-        const hasNextMonthDay = currentWeekDays.some(
+        const hasCurrentMonth = currentWeekDays.some(
+          (d) =>
+            d.getMonth() === viewMonth.month &&
+            d.getFullYear() === viewMonth.year
+        );
+        const hasNextMonth = currentWeekDays.some(
           (d) => d.getMonth() === nextM && d.getFullYear() === nextY
         );
-        if (hasNextMonthDay) {
+
+        if (hasCurrentMonth && hasNextMonth) {
+          // 현재 주가 spanning week — viewMonth 만 다음 달로 (같은 주 유지)
+          // 예: 4/27~5/3 (4월 라벨) → 4/27~5/3 (5월 라벨)
           setViewMonth({ year: nextY, month: nextM });
         } else {
-          // 다음 주로 이동 (+7일) — viewMonth 는 useEffect 에서 자동 동기화
+          // 일반 주 이동 (+7일)
+          // 다음 주가 spanning week 라면 useEffect 가 viewMonth 를 selectedDate 의 달로 맞춰줌
+          // → 4/20~26 (4월) → +7 → selectedDate=4/27, useEffect → viewMonth=4월
+          //   → 4/27~5/3 (4월 라벨) 로 진입 ✓
           setSelectedDate((prev) => {
             const d = new Date(prev);
             d.setDate(d.getDate() + 7);
@@ -4701,16 +4809,24 @@ function CompareWeeklyBoard({
     } else if (goPrev) {
       setDragX(width);
       setTimeout(() => {
-        // 현재 주에 viewMonth-1 달의 날짜가 섞여있으면 → 같은 주 유지, 라벨만 이전 달
         const prevM = (viewMonth.month + 11) % 12;
         const prevY =
           viewMonth.month === 0 ? viewMonth.year - 1 : viewMonth.year;
-        const hasPrevMonthDay = currentWeekDays.some(
+        const hasCurrentMonth = currentWeekDays.some(
+          (d) =>
+            d.getMonth() === viewMonth.month &&
+            d.getFullYear() === viewMonth.year
+        );
+        const hasPrevMonth = currentWeekDays.some(
           (d) => d.getMonth() === prevM && d.getFullYear() === prevY
         );
-        if (hasPrevMonthDay) {
+
+        if (hasCurrentMonth && hasPrevMonth) {
+          // 현재 주가 spanning week — viewMonth 만 이전 달로 (같은 주 유지)
+          // 예: 4/27~5/3 (5월 라벨) → 4/27~5/3 (4월 라벨)
           setViewMonth({ year: prevY, month: prevM });
         } else {
+          // 일반 주 이동 (-7일)
           setSelectedDate((prev) => {
             const d = new Date(prev);
             d.setDate(d.getDate() - 7);
@@ -5283,15 +5399,27 @@ function CompareWeeklyBoard({
                       if (t.isNight) bgColor = "bg-sky-500/30";
                       else if (hasWork) bgColor = "bg-yellow-500/30";
                     }
+                    const cellKey = `${depot}::${name}::${fmt(d)}`;
+                    const isCellSelected = selectedCellKey === cellKey;
                     return (
                       <div
                         key={`${depot}::${name}_${fmt(d)}`}
-                        className={`px-1 py-1 text-[11px] leading-tight border-l border-gray-700 ${bgColor} ${
+                        onClick={() => handleCellTap(name, depot, d)}
+                        className={`px-1 py-1 text-[11px] leading-tight border-l border-gray-700 cursor-pointer ${bgColor} ${
                           outside ? "opacity-50" : ""
                         }`}
+                        style={{
+                          position: "relative",
+                          boxShadow: isCellSelected
+                            ? "inset 0 0 0 2px #60a5fa"
+                            : undefined,
+                          zIndex: isCellSelected ? 6 : undefined,
+                        }}
                         title={`${depot} • ${name} • ${fmtWithWeekday(
                           d
-                        )} • DIA ${dia} / ${t.in}~${t.out}`}
+                        )} • DIA ${dia} / ${t.in}~${
+                          t.out
+                        } (한 번 탭 선택, 또 탭하면 행로)`}
                       >
                         <div className="font-semibold">{finalLabel}</div>
                         <div className="mt-0.5">{t.in || "-"}</div>
