@@ -4313,7 +4313,27 @@ function CompareWeeklyBoard({
       localStorage.setItem("compareGroups_v1", JSON.stringify(groups));
     } catch {}
   }, [groups]);
-  const [activeGroupId, setActiveGroupId] = React.useState("g1");
+  const [activeGroupId, setActiveGroupId] = React.useState(() => {
+    try {
+      const saved = localStorage.getItem("compareActiveGroupId_v1");
+      if (saved) return saved;
+    } catch {}
+    return "g1";
+  });
+  React.useEffect(() => {
+    try {
+      localStorage.setItem("compareActiveGroupId_v1", activeGroupId);
+    } catch {}
+  }, [activeGroupId]);
+  // 저장된 activeGroupId 가 실제로 존재하는지 확인
+  React.useEffect(() => {
+    if (!groups.length) return;
+    if (!groups.some((g) => g.id === activeGroupId)) {
+      const fallbackId = groups[0].id;
+      setActiveGroupId(fallbackId);
+      setCompareSelected(groups[0].people || []);
+    }
+  }, [groups, activeGroupId]);
   const [editingGroupId, setEditingGroupId] = React.useState(null);
   const [editingLabel, setEditingLabel] = React.useState("");
   const activeGroup =
@@ -4388,6 +4408,193 @@ function CompareWeeklyBoard({
     return arr;
   }, [selectedDate]);
 
+  // ─────────────────────────────────────────
+  //  viewMonth — 라벨/음영 기준이 되는 "표시 중인 달".
+  //  selectedDate 와 분리해서 관리한다.
+  //   • 같은 주 안에서 4월↔5월 시점만 토글 가능 (selectedDate 는 그대로)
+  //   • 다른 주로 점프하면 selectedDate 의 달로 자동 동기화
+  // ─────────────────────────────────────────
+  const [viewMonth, setViewMonth] = React.useState(() => ({
+    year: selectedDate.getFullYear(),
+    month: selectedDate.getMonth(),
+  }));
+
+  // selectedDate 가 "다른 주"로 점프하면 viewMonth 를 그 달로 동기화.
+  // (월 picker, 오늘로 버튼, 외부에서 setSelectedDate 가 호출될 때 모두 처리)
+  const prevSelectedRef = React.useRef(selectedDate);
+  React.useEffect(() => {
+    const prev = prevSelectedRef.current;
+    const curr = selectedDate;
+    const weekStartTime = (d) => {
+      const dow = (d.getDay() + 6) % 7;
+      const x = new Date(d);
+      x.setDate(d.getDate() - dow);
+      x.setHours(0, 0, 0, 0);
+      return x.getTime();
+    };
+    if (weekStartTime(prev) !== weekStartTime(curr)) {
+      setViewMonth({
+        year: curr.getFullYear(),
+        month: curr.getMonth(),
+      });
+    }
+    prevSelectedRef.current = curr;
+  }, [selectedDate]);
+
+  // ─────────────────────────────────────────
+  //  순서 변경 (long-press → 들어올림 → 드래그)
+  //
+  //  draggingIdx: 현재 들어올린 행의 인덱스 (null = 비활성)
+  //  hoverIdx:    현재 손가락이 가리키는 슬롯 인덱스 (= 놓으면 들어갈 자리)
+  //  dragOffsetY: 들어올린 행이 시각적으로 따라가는 Y 거리 (px)
+  // ─────────────────────────────────────────
+  const [draggingIdx, setDraggingIdx] = React.useState(null);
+  const [hoverIdx, setHoverIdx] = React.useState(null);
+  const [dragOffsetY, setDragOffsetY] = React.useState(0);
+
+  // long-press 타이머 + 시작 좌표
+  const lpRef = React.useRef({
+    timer: null,
+    startY: 0,
+    startX: 0,
+    rowHeight: 56, // 측정 후 갱신됨
+    listTop: 0,
+    fired: false,
+    moved: false,
+  });
+  const LP_MS = 500;
+  const LP_MOVE_CANCEL_PX = 8;
+
+  // 행 DOM 측정용 — 리스트 컨테이너
+  const listRef = React.useRef(null);
+
+  // 들어올림 모드 종료 (commit 또는 cancel)
+  const endDrag = React.useCallback(
+    (commit) => {
+      if (
+        commit &&
+        draggingIdx != null &&
+        hoverIdx != null &&
+        draggingIdx !== hoverIdx
+      ) {
+        setGroups((prev) => {
+          const idxRaw = prev.findIndex((g) => g.id === activeGroupId);
+          const gi = idxRaw === -1 ? 0 : idxRaw;
+          const target = prev[gi];
+          if (!target?.people?.length) return prev;
+          const arr = [...target.people];
+          const [moved] = arr.splice(draggingIdx, 1);
+          // hoverIdx 가 draggingIdx 보다 뒤면 splice 로 인해 한 칸 당겨졌으므로
+          // 그대로 insert. 앞이면 그대로.
+          arr.splice(hoverIdx, 0, moved);
+          const next = [...prev];
+          next[gi] = { ...target, people: arr };
+          setCompareSelected(arr);
+          return next;
+        });
+      }
+      setDraggingIdx(null);
+      setHoverIdx(null);
+      setDragOffsetY(0);
+    },
+    [draggingIdx, hoverIdx, activeGroupId, setCompareSelected]
+  );
+
+  // 행 핸들러 팩토리
+  const makeRowDragHandlers = (idx) => ({
+    onTouchStart: (e) => {
+      // 1명뿐이거나 X 버튼 등은 무시
+      if (people.length < 2) return;
+      if (e.target.closest("[data-no-drag]")) return;
+      const t = e.touches[0];
+      lpRef.current.startY = t.clientY;
+      lpRef.current.startX = t.clientX;
+      lpRef.current.fired = false;
+      lpRef.current.moved = false;
+      // 행 높이 측정 (첫 행 기준)
+      const firstRow = listRef.current?.querySelector("[data-row]");
+      if (firstRow) lpRef.current.rowHeight = firstRow.offsetHeight || 56;
+      // 리스트 상단 좌표 측정
+      const listRect = listRef.current?.getBoundingClientRect();
+      lpRef.current.listTop = listRect?.top || 0;
+
+      clearTimeout(lpRef.current.timer);
+      lpRef.current.timer = setTimeout(() => {
+        if (lpRef.current.moved) return;
+        lpRef.current.fired = true;
+        try {
+          navigator.vibrate?.(15);
+        } catch {}
+        setDraggingIdx(idx);
+        setHoverIdx(idx);
+        setDragOffsetY(0);
+      }, LP_MS);
+    },
+    onTouchMove: (e) => {
+      const t = e.touches[0];
+      const dy = t.clientY - lpRef.current.startY;
+      const dx = t.clientX - lpRef.current.startX;
+
+      // 아직 long-press 발동 전 — 일정 거리 이상 움직였으면 long-press 취소
+      if (!lpRef.current.fired) {
+        if (
+          Math.abs(dx) > LP_MOVE_CANCEL_PX ||
+          Math.abs(dy) > LP_MOVE_CANCEL_PX
+        ) {
+          lpRef.current.moved = true;
+          clearTimeout(lpRef.current.timer);
+        }
+        return;
+      }
+
+      // 들어올림 모드 — 페이지 스크롤/스와이프 모두 막고 위치 추적
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
+      setDragOffsetY(dy);
+
+      // 손가락 Y 가 어느 행 위에 있는지 계산
+      const rh = lpRef.current.rowHeight || 56;
+      const relY = t.clientY - lpRef.current.listTop;
+      let target = Math.floor(relY / rh);
+      if (target < 0) target = 0;
+      if (target > people.length - 1) target = people.length - 1;
+      setHoverIdx(target);
+    },
+    onTouchEnd: () => {
+      clearTimeout(lpRef.current.timer);
+      if (lpRef.current.fired) {
+        endDrag(true);
+      }
+      lpRef.current.fired = false;
+      lpRef.current.moved = false;
+    },
+    onTouchCancel: () => {
+      clearTimeout(lpRef.current.timer);
+      if (lpRef.current.fired) endDrag(false);
+      lpRef.current.fired = false;
+      lpRef.current.moved = false;
+    },
+  });
+
+  // 다른 행들이 비켜줄 거리 계산
+  // - 들린 행: 손가락 따라 dragOffsetY 만큼 이동
+  // - 들린 행과 hoverIdx 사이의 다른 행들: rowHeight 만큼 위/아래로 비켜줌
+  const getRowTransform = (idx) => {
+    if (draggingIdx == null || hoverIdx == null) return "";
+    if (idx === draggingIdx) {
+      return `translateY(${dragOffsetY}px) scale(1.03)`;
+    }
+    const rh = lpRef.current.rowHeight || 56;
+    if (draggingIdx < hoverIdx) {
+      // 아래로 이동 중 — 들린 행 다음 ~ hoverIdx 까지는 위로 한 칸 비킴
+      if (idx > draggingIdx && idx <= hoverIdx) return `translateY(-${rh}px)`;
+    } else if (draggingIdx > hoverIdx) {
+      // 위로 이동 중 — hoverIdx ~ 들린 행 직전 까지는 아래로 한 칸 비킴
+      if (idx >= hoverIdx && idx < draggingIdx) return `translateY(${rh}px)`;
+    }
+    return "";
+  };
+
   const headerRef = React.useRef(null);
   const [headerH, setHeaderH] = React.useState(0);
   React.useLayoutEffect(() => {
@@ -4420,6 +4627,7 @@ function CompareWeeklyBoard({
 
   const onTouchStart = (e) => {
     if (e.target.closest("[data-no-gesture]")) return;
+    if (draggingIdx != null) return;
     const t = e.touches[0];
     gRef.current = {
       sx: t.clientX,
@@ -4433,6 +4641,8 @@ function CompareWeeklyBoard({
   };
   const onTouchMove = (e) => {
     if (e.target.closest("[data-no-gesture]")) return;
+    // 행 들어올림 중에는 가로 스와이프(주 이동) 무시
+    if (draggingIdx != null) return;
     const t = e.touches[0];
     const dx = t.clientX - gRef.current.sx,
       dy = t.clientY - gRef.current.sy;
@@ -4468,23 +4678,45 @@ function CompareWeeklyBoard({
     if (goNext) {
       setDragX(-width);
       setTimeout(() => {
-        // 다음 주로 이동 (+7일) — 달 경계 자동 처리
-        setSelectedDate((prev) => {
-          const d = new Date(prev);
-          d.setDate(d.getDate() + 7);
-          return stripTime(d);
-        });
+        // 현재 주에 viewMonth+1 달의 날짜가 섞여있으면 → 같은 주 유지, 라벨만 다음 달
+        const nextM = (viewMonth.month + 1) % 12;
+        const nextY =
+          viewMonth.month === 11 ? viewMonth.year + 1 : viewMonth.year;
+        const hasNextMonthDay = currentWeekDays.some(
+          (d) => d.getMonth() === nextM && d.getFullYear() === nextY
+        );
+        if (hasNextMonthDay) {
+          setViewMonth({ year: nextY, month: nextM });
+        } else {
+          // 다음 주로 이동 (+7일) — viewMonth 는 useEffect 에서 자동 동기화
+          setSelectedDate((prev) => {
+            const d = new Date(prev);
+            d.setDate(d.getDate() + 7);
+            return stripTime(d);
+          });
+        }
         setDragX(0);
         setSnapping(false);
       }, SNAP_MS);
     } else if (goPrev) {
       setDragX(width);
       setTimeout(() => {
-        setSelectedDate((prev) => {
-          const d = new Date(prev);
-          d.setDate(d.getDate() - 7);
-          return stripTime(d);
-        });
+        // 현재 주에 viewMonth-1 달의 날짜가 섞여있으면 → 같은 주 유지, 라벨만 이전 달
+        const prevM = (viewMonth.month + 11) % 12;
+        const prevY =
+          viewMonth.month === 0 ? viewMonth.year - 1 : viewMonth.year;
+        const hasPrevMonthDay = currentWeekDays.some(
+          (d) => d.getMonth() === prevM && d.getFullYear() === prevY
+        );
+        if (hasPrevMonthDay) {
+          setViewMonth({ year: prevY, month: prevM });
+        } else {
+          setSelectedDate((prev) => {
+            const d = new Date(prev);
+            d.setDate(d.getDate() - 7);
+            return stripTime(d);
+          });
+        }
         setDragX(0);
         setSnapping(false);
       }, SNAP_MS);
@@ -4508,17 +4740,21 @@ function CompareWeeklyBoard({
   const selectableNames = React.useMemo(() => {
     const src = parsedByDepot[pickerDepot]?.names ?? [];
     const pickedKey = new Set(people.map((p) => `${p.depot}::${p.name}`));
-    return src.filter(
-      (n) =>
-        !pickedKey.has(`${pickerDepot}::${n}`) &&
-        (filterText.trim()
-          ? n.toLowerCase().includes(filterText.trim().toLowerCase())
-          : true)
-    );
+    return src
+      .filter(
+        (n) =>
+          !pickedKey.has(`${pickerDepot}::${n}`) &&
+          (filterText.trim()
+            ? n.toLowerCase().includes(filterText.trim().toLowerCase())
+            : true)
+      )
+      .sort((a, b) => String(a).localeCompare(String(b), "ko"));
   }, [parsedByDepot, pickerDepot, people, filterText]);
   const NAME_COL_W = 80;
   const displayedWeekDays = currentWeekDays;
-  const monthIdx = selectedDate.getMonth();
+  // 라벨/음영 모두 viewMonth 기준으로 일원화
+  const monthIdx = viewMonth.month;
+  const monthYear = viewMonth.year;
   const todayISO = fmt(stripTime(new Date()));
   const isCurrentWeekHasToday = React.useMemo(
     () => displayedWeekDays.some((d) => fmt(d) === todayISO),
@@ -4529,11 +4765,7 @@ function CompareWeeklyBoard({
     return displayedWeekDays.findIndex((d) => fmt(d) === todayISO);
   }, [isCurrentWeekHasToday, displayedWeekDays, todayISO]);
 
-  // 이번 주가 두 달에 걸쳐있을 수 있으므로 "월 라벨"은 주의 중간 날짜 기준
-  const weekMidDate = displayedWeekDays[3] || selectedDate;
-  const monthLabel = `${weekMidDate.getFullYear()}.${String(
-    weekMidDate.getMonth() + 1
-  ).padStart(2, "0")}`;
+  const monthLabel = `${monthYear}.${String(monthIdx + 1).padStart(2, "0")}`;
 
   function getContrastText(bg) {
     if (!bg) return "#fff";
@@ -4902,7 +5134,8 @@ function CompareWeeklyBoard({
           {displayedWeekDays.map((d) => {
             const dow = d.getDay(),
               isoD = fmt(d),
-              outside = d.getMonth() !== monthIdx;
+              outside =
+                d.getMonth() !== monthIdx || d.getFullYear() !== monthYear;
             const color =
               dow === 0
                 ? "text-red-400"
@@ -4944,7 +5177,7 @@ function CompareWeeklyBoard({
         onTouchEnd={onTouchEnd}
       >
         {/* 인원 리스트를 감싸는 relative — 빨간 박스는 이 안에서만 차지 */}
-        <div className="relative">
+        <div className="relative" ref={listRef}>
           {/* 오늘 열 표시 — 인원 리스트 실제 높이만큼만 */}
           {todayColIndex >= 0 && people.length > 0 && (
             <div
@@ -4959,80 +5192,116 @@ function CompareWeeklyBoard({
             />
           )}
           <div className="divide-y divide-gray-700">
-            {people.map(({ name, depot }) => (
-              <div
-                key={`${depot}::${name}`}
-                className="grid bg-gray-800/60 hover:bg-gray-800"
-                style={{
-                  gridTemplateColumns: `${NAME_COL_W}px repeat(7, minmax(0,1fr))`,
-                }}
-              >
-                <div className="px-2 py-1 border-r border-gray-700 flex items-center justify-between min-w-0">
+            {people.map(({ name, depot }, rowIdx) => {
+              const isDragging = draggingIdx === rowIdx;
+              const rowTransform = getRowTransform(rowIdx);
+              const dragHandlers = makeRowDragHandlers(rowIdx);
+              return (
+                <div
+                  key={`${depot}::${name}`}
+                  data-row
+                  className="grid bg-gray-800/60 hover:bg-gray-800"
+                  style={{
+                    gridTemplateColumns: `${NAME_COL_W}px repeat(7, minmax(0,1fr))`,
+                    transform: rowTransform || undefined,
+                    transition:
+                      draggingIdx == null
+                        ? "transform 200ms ease"
+                        : isDragging
+                        ? "none"
+                        : "transform 180ms ease",
+                    zIndex: isDragging ? 10 : "auto",
+                    position: "relative",
+                    boxShadow: isDragging
+                      ? "0 8px 20px rgba(0,0,0,0.45)"
+                      : undefined,
+                    background: isDragging ? "rgba(31,41,55,0.95)" : undefined,
+                    touchAction: isDragging ? "none" : undefined,
+                  }}
+                >
                   <div
-                    className="text-white font-semibold truncate text-[12px] min-w-0"
-                    title={`${depot} • ${name}`}
+                    className="px-2 py-1 border-r border-gray-700 flex items-center justify-between min-w-0"
+                    onTouchStart={dragHandlers.onTouchStart}
+                    onTouchMove={dragHandlers.onTouchMove}
+                    onTouchEnd={dragHandlers.onTouchEnd}
+                    onTouchCancel={dragHandlers.onTouchCancel}
+                    style={{ touchAction: "pan-y" }}
                   >
-                    {name}
-                  </div>
-                  <button
-                    className="w-4 h-4 rounded-full bg-gray-700 hover:bg-gray-600 text-[10px] flex items-center justify-center flex-shrink-0 ml-0.5"
-                    onClick={() => removePerson(name, depot)}
-                    type="button"
-                  >
-                    −
-                  </button>
-                </div>
-                {displayedWeekDays.map((d) => {
-                  const row = rowAtDateFor(name, depot, d);
-                  const t = computeInOut(row, d, holidaySet);
-                  const dia =
-                    row?.dia === undefined
-                      ? "-"
-                      : typeof row.dia === "number"
-                      ? row.dia
-                      : String(row.dia).replace(/\s+/g, "");
-                  const diaLabel =
-                    row?.dia == null ? "" : String(row.dia).replace(/\s+/g, "");
-                  const finalLabel = isOverridden(name, depot, d)
-                    ? diaLabel
-                      ? `*${diaLabel}`
-                      : "*"
-                    : diaLabel || "-";
-                  const outside = d.getMonth() !== monthIdx;
-
-                  let bgColor = "bg-gray-800/60";
-                  const todayDiaStr = String(row?.dia || "").replace(/\s/g, "");
-                  const isOff =
-                    !todayDiaStr ||
-                    todayDiaStr.startsWith("휴") ||
-                    todayDiaStr.includes("비번") ||
-                    todayDiaStr === "비" ||
-                    todayDiaStr.endsWith("~");
-                  if (!isOff) {
-                    const isTime = (v) =>
-                      typeof v === "string" && /^\d{1,2}\s*:\s*\d{2}$/.test(v);
-                    const hasWork = isTime(t.in) || isTime(t.out);
-                    if (t.isNight) bgColor = "bg-sky-500/30";
-                    else if (hasWork) bgColor = "bg-yellow-500/30";
-                  }
-                  return (
                     <div
-                      key={`${depot}::${name}_${fmt(d)}`}
-                      className={`px-1 py-1 text-[11px] leading-tight border-l border-gray-700 ${bgColor} ${
-                        outside ? "opacity-50" : ""
-                      }`}
-                      title={`${depot} • ${name} • ${fmtWithWeekday(
-                        d
-                      )} • DIA ${dia} / ${t.in}~${t.out}`}
+                      className="text-white font-semibold truncate text-[12px] min-w-0"
+                      title={`${depot} • ${name} (꾹 눌러서 순서 변경)`}
                     >
-                      <div className="font-semibold">{finalLabel}</div>
-                      <div className="mt-0.5">{t.in || "-"}</div>
-                      <div>{t.out || "-"}</div>
+                      {name}
                     </div>
-                  );
-                })}
-              </div>
-            ))}
+                    <button
+                      data-no-drag
+                      className="w-4 h-4 rounded-full bg-gray-700 hover:bg-gray-600 text-[10px] flex items-center justify-center flex-shrink-0 ml-0.5"
+                      onClick={() => removePerson(name, depot)}
+                      type="button"
+                    >
+                      −
+                    </button>
+                  </div>
+                  {displayedWeekDays.map((d) => {
+                    const row = rowAtDateFor(name, depot, d);
+                    const t = computeInOut(row, d, holidaySet);
+                    const dia =
+                      row?.dia === undefined
+                        ? "-"
+                        : typeof row.dia === "number"
+                        ? row.dia
+                        : String(row.dia).replace(/\s+/g, "");
+                    const diaLabel =
+                      row?.dia == null
+                        ? ""
+                        : String(row.dia).replace(/\s+/g, "");
+                    const finalLabel = isOverridden(name, depot, d)
+                      ? diaLabel
+                        ? `*${diaLabel}`
+                        : "*"
+                      : diaLabel || "-";
+                    const outside =
+                      d.getMonth() !== monthIdx ||
+                      d.getFullYear() !== monthYear;
+
+                    let bgColor = "bg-gray-800/60";
+                    const todayDiaStr = String(row?.dia || "").replace(
+                      /\s/g,
+                      ""
+                    );
+                    const isOff =
+                      !todayDiaStr ||
+                      todayDiaStr.startsWith("휴") ||
+                      todayDiaStr.includes("비번") ||
+                      todayDiaStr === "비" ||
+                      todayDiaStr.endsWith("~");
+                    if (!isOff) {
+                      const isTime = (v) =>
+                        typeof v === "string" &&
+                        /^\d{1,2}\s*:\s*\d{2}$/.test(v);
+                      const hasWork = isTime(t.in) || isTime(t.out);
+                      if (t.isNight) bgColor = "bg-sky-500/30";
+                      else if (hasWork) bgColor = "bg-yellow-500/30";
+                    }
+                    return (
+                      <div
+                        key={`${depot}::${name}_${fmt(d)}`}
+                        className={`px-1 py-1 text-[11px] leading-tight border-l border-gray-700 ${bgColor} ${
+                          outside ? "opacity-50" : ""
+                        }`}
+                        title={`${depot} • ${name} • ${fmtWithWeekday(
+                          d
+                        )} • DIA ${dia} / ${t.in}~${t.out}`}
+                      >
+                        <div className="font-semibold">{finalLabel}</div>
+                        <div className="mt-0.5">{t.in || "-"}</div>
+                        <div>{t.out || "-"}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
             {people.length === 0 && (
               <div className="text-center py-8 text-xs text-gray-500">
                 "인원·그룹 관리" 로 사람을 추가하세요.
@@ -5042,7 +5311,7 @@ function CompareWeeklyBoard({
         </div>
       </div>
       <div className="mt-1 text-[10px] text-gray-400 text-center">
-        주 이동은 상단 날짜 바를 ← / → 로 스와이프 · 인원 목록은 위아래 스크롤
+        주 이동은 ← / → 스와이프 · 이름을 꾹 눌러 순서 변경
       </div>
     </div>
   );
