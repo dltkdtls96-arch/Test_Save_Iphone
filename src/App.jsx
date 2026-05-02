@@ -668,6 +668,10 @@ export default function App() {
       patched.weekday = { ...tpl.weekday };
       patched.saturday = { ...tpl.saturday };
       patched.holiday = { ...tpl.holiday };
+      // 🌙 야간 퇴근 시간 계산을 위한 다음 자리 worktime 도 함께 교체
+      if (tpl.weekdayNext) patched.weekdayNext = { ...tpl.weekdayNext };
+      if (tpl.saturdayNext) patched.saturdayNext = { ...tpl.saturdayNext };
+      if (tpl.holidayNext) patched.holidayNext = { ...tpl.holidayNext };
     };
 
     // 1) 휴/비번/비/교육/휴가
@@ -1114,6 +1118,9 @@ export default function App() {
           weekday: { ...r.weekday },
           saturday: { ...r.saturday },
           holiday: { ...r.holiday },
+          weekdayNext: { ...(r.weekdayNext || { in: "", out: "" }) },
+          saturdayNext: { ...(r.saturdayNext || { in: "", out: "" }) },
+          holidayNext: { ...(r.holidayNext || { in: "", out: "" }) },
         };
     });
     return map;
@@ -1130,6 +1137,9 @@ export default function App() {
             weekday: { ...r.weekday },
             saturday: { ...r.saturday },
             holiday: { ...r.holiday },
+            weekdayNext: { ...(r.weekdayNext || { in: "", out: "" }) },
+            saturdayNext: { ...(r.saturdayNext || { in: "", out: "" }) },
+            holidayNext: { ...(r.holidayNext || { in: "", out: "" }) },
           };
       }
     });
@@ -4273,6 +4283,10 @@ function CompareWeeklyBoard({
         patched.weekday = { ...tpl.weekday };
         patched.saturday = { ...tpl.saturday };
         patched.holiday = { ...tpl.holiday };
+        // 🌙 야간 퇴근 시간 계산을 위한 다음 자리 worktime 도 함께 교체
+        if (tpl.weekdayNext) patched.weekdayNext = { ...tpl.weekdayNext };
+        if (tpl.saturdayNext) patched.saturdayNext = { ...tpl.saturdayNext };
+        if (tpl.holidayNext) patched.holidayNext = { ...tpl.holidayNext };
       };
       if (v === "비번" || v === "휴") {
         patched.dia = v;
